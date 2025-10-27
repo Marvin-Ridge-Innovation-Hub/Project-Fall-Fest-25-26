@@ -584,10 +584,10 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   }, [firstName, lastInitial, onScoreSubmitted, reset, requiresProfile, score, studentId]);
 
   return (
-    <div className="w-full h-full flex flex-col items-center">
+    <div className={`w-full h-full flex flex-col ${fullScreen ? "items-stretch" : "items-center"}`}>
       <div
         ref={containerRef}
-        className={fullScreen ? "relative w-screen h-dvh overflow-hidden" : "relative"}
+        className={fullScreen ? "relative w-full h-dvh overflow-hidden" : "relative"}
         style={fullScreen ? undefined : { width: BASE_WIDTH, height: BASE_HEIGHT }}
       >
         <canvas

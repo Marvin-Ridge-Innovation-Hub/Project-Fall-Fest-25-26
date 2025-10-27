@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -36,6 +36,13 @@ export const metadata: Metadata = {
   icons: {
     icon: "/flappy-bird-assets-master/sprites/yellowbird-midflap.png",
   },
+};
+
+// Ensure correct mobile sizing and use of safe areas (iOS Safari)
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

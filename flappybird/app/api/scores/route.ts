@@ -1,6 +1,14 @@
 import { NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import path from "path";
+// Use Vercel KV on Vercel deployments when available, else fall back to file storage locally
+let kv: any = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  kv = require("@vercel/kv").kv;
+} catch {
+  kv = null;
+}
 
 // Legacy entry (initial implementation)
 type LegacyScore = {
@@ -54,15 +62,32 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const limitParam = searchParams.get("limit");
   const idParam = searchParams.get("id");
-  const scores = await readScores();
+  // Prefer KV on Vercel when configured
+  const useKV = Boolean(process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL) && kv;
 
-  // Lookup by id (new schema only)
+  if (useKV) {
+    // Lookup by id in KV
+    if (idParam) {
+      const idKey = `scores:users:${idParam.toLowerCase()}`;
+      const entry = (await kv.get(idKey)) as ScoreEntry | null;
+      return NextResponse.json({ exists: Boolean(entry), entry: entry ?? null }, { headers: { "Cache-Control": "no-store" } });
+    }
+    // List by sorted set
+    const limit = limitParam ? Math.max(1, Math.min(10000, Number(limitParam))) : -1; // -1 means all
+    // @vercel/kv: zrange supports {rev:true}
+    const ids: string[] = await kv.zrange("scores:zset", 0, limit === -1 ? -1 : limit - 1, { rev: true });
+    const entries = (
+      await Promise.all(ids.map((id) => kv.get(`scores:users:${id}` as string)))
+    ).filter(Boolean) as ScoreEntry[];
+    return NextResponse.json(entries, { headers: { "Cache-Control": "no-store" } });
+  }
+
+  // Fallback to file storage locally
+  const scores = await readScores();
   if (idParam) {
     const entry = (scores as ScoreEntry[]).find((s: any) => typeof s.id === "string" && s.id.toLowerCase() === idParam.toLowerCase());
     return NextResponse.json({ exists: Boolean(entry), entry: entry ?? null }, { headers: { "Cache-Control": "no-store" } });
   }
-
-  // List all (legacy + new), sorted by score desc, then by displayName
   const sorted = scores
     .slice()
     .sort((a: any, b: any) => {
@@ -72,7 +97,6 @@ export async function GET(request: Request) {
       const nameB = typeof b.firstName === "string" ? `${b.firstName} ${b.lastInitial ?? ""}` : b.name ?? "";
       return nameA.localeCompare(nameB);
     });
-
   if (limitParam) {
     const limit = Math.max(1, Math.min(10000, Number(limitParam)));
     return NextResponse.json(sorted.slice(0, limit), { headers: { "Cache-Control": "no-store" } });
@@ -96,24 +120,50 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid score" }, { status: 400 });
     }
 
+    const useKV = Boolean(process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL) && kv;
+    if (useKV) {
+      const idKey = `scores:users:${id.toLowerCase()}`;
+      const existing = (await kv.get(idKey)) as ScoreEntry | null;
+      if (existing) {
+        const newScore = Math.floor(scoreRaw);
+        const updatedScore = Math.max(existing.score ?? 0, newScore);
+        const updated: ScoreEntry = { ...existing, score: updatedScore, updatedAt: new Date().toISOString() };
+        await Promise.all([
+          kv.set(idKey, updated),
+          kv.zadd("scores:zset", { score: updatedScore, member: id.toLowerCase() }),
+        ]);
+        return NextResponse.json({ ok: true, updated: true, exists: true }, { status: 200 });
+      }
+      if (!firstNameRaw || !lastInitialRaw) {
+        return NextResponse.json({ requiresProfile: true }, { status: 409 });
+      }
+      const createdAt = new Date().toISOString();
+      const entry: ScoreEntry = {
+        id,
+        firstName: firstNameRaw.slice(0, 40),
+        lastInitial: lastInitialRaw.charAt(0).toUpperCase(),
+        score: Math.floor(scoreRaw),
+        createdAt,
+        updatedAt: createdAt,
+      };
+      await Promise.all([
+        kv.set(idKey, entry),
+        kv.zadd("scores:zset", { score: entry.score, member: id.toLowerCase() }),
+      ]);
+      return NextResponse.json({ ok: true, created: true, exists: false }, { status: 201 });
+    }
+
+    // file-based fallback (local dev)
     const scores = await readScores();
     const idx = (scores as ScoreEntry[]).findIndex((s: any) => typeof s.id === "string" && s.id.toLowerCase() === id.toLowerCase());
-
     if (idx >= 0) {
-      // Update existing entry: keep highest score
       const existing = scores[idx] as ScoreEntry;
       const newScore = Math.floor(scoreRaw);
-      const updated: ScoreEntry = {
-        ...existing,
-        score: Math.max(existing.score ?? 0, newScore),
-        updatedAt: new Date().toISOString(),
-      };
+      const updated: ScoreEntry = { ...existing, score: Math.max(existing.score ?? 0, newScore), updatedAt: new Date().toISOString() };
       scores[idx] = updated;
       await writeScores(scores);
       return NextResponse.json({ ok: true, updated: true, exists: true }, { status: 200 });
     }
-
-    // Not found: require profile unless firstName + lastInitial provided
     if (!firstNameRaw || !lastInitialRaw) {
       return NextResponse.json({ requiresProfile: true }, { status: 409 });
     }

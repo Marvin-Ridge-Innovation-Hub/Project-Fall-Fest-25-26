@@ -42,6 +42,10 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   const digitsRef = useRef<HTMLImageElement[]>([]);
   // Pre-tinted pipe sprite variants per difficulty level to avoid per-frame filters (mobile perf)
   const tintedPipesRef = useRef<HTMLCanvasElement[]>([]);
+  // Render scale to reduce fill rate on mobile (logical units stay the same)
+  const renderScaleRef = useRef<number>(1);
+  // Rate-limit point sound to avoid audio-induced jank
+  const lastPointAtRef = useRef<number>(0);
 
   const [running, setRunning] = useState<boolean>(false);
   const [gameOver, setGameOver] = useState<boolean>(false);
@@ -212,7 +216,9 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
             p.passed = true;
             setScore((s) => s + 1);
             const point = audioRef.current["point"];
-            if (point) {
+            const nowTs = performance.now();
+            if (point && nowTs - lastPointAtRef.current > 150) {
+              lastPointAtRef.current = nowTs;
               try {
                 point.currentTime = 0;
                 point.play();
@@ -251,8 +257,16 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
       }
 
       // draw
-      const W = widthRef.current;
-      const H = heightRef.current;
+  // clear full backbuffer (unscaled)
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // draw in logical coordinates at reduced backbuffer scale
+  const scale = renderScaleRef.current;
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+
+  const W = widthRef.current;
+  const H = heightRef.current;
       const wScale = W / BASE_WIDTH;
       const hScale = H / BASE_HEIGHT;
       const PIPE_WIDTH = BASE_PIPE_WIDTH * wScale;
@@ -414,6 +428,9 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         newW = Math.max(1, container.clientWidth);
         newH = Math.max(1, container.clientHeight);
       }
+      // Pick a render scale < 1 on mobile to reduce fill rate
+      const isSmall = Math.min(newW, newH) < 700;
+      renderScaleRef.current = isSmall ? 0.75 : 1;
       // adjust positions proportionally to avoid sudden jumps
       const prevW = widthRef.current;
       const prevH = heightRef.current;
@@ -430,8 +447,9 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
       }
       widthRef.current = newW;
       heightRef.current = newH;
-      canvas.width = newW;
-      canvas.height = newH;
+      // Set physical backbuffer size smaller by renderScale
+      canvas.width = Math.max(1, Math.floor(newW * renderScaleRef.current));
+      canvas.height = Math.max(1, Math.floor(newH * renderScaleRef.current));
     };
     resizeToContainer();
     window.addEventListener("resize", resizeToContainer);

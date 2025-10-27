@@ -40,6 +40,8 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   const birdFrameRef = useRef<number>(0);
   const birdFrameTimeRef = useRef<number>(0);
   const digitsRef = useRef<HTMLImageElement[]>([]);
+  // Pre-tinted pipe sprite variants per difficulty level to avoid per-frame filters (mobile perf)
+  const tintedPipesRef = useRef<HTMLCanvasElement[]>([]);
 
   const [running, setRunning] = useState<boolean>(false);
   const [gameOver, setGameOver] = useState<boolean>(false);
@@ -289,19 +291,20 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
       }
 
       // pipes (use green pipe sprite; flip for top). Skip drawing until loaded.
+      // choose pre-tinted pipe sprite for current level
+      const levelIdx = Math.min(MAX_LEVEL, Math.floor(score / 10));
+      const tintedPipe = tintedPipesRef.current[levelIdx];
       const pipeImg = imagesRef.current["pipe-green"];
-      if (pipeImg && assetsLoaded) {
+      if ((tintedPipe || pipeImg) && assetsLoaded) {
         ctx.save();
-        // apply rainbow tint via hue rotation based on current difficulty level
-        const deg = Math.min(MAX_LEVEL, Math.floor(score / 10)) * 45; // 0..360
-        if (deg > 0) ctx.filter = `hue-rotate(${deg}deg) saturate(1.2)`;
+        const sprite = tintedPipe || pipeImg;
         pipes.current.forEach((p) => {
           // top pipe (flipped)
           ctx.save();
           ctx.translate(p.x + PIPE_WIDTH / 2, p.gapY);
           ctx.scale(1, -1);
           ctx.drawImage(
-            pipeImg,
+            sprite,
             -PIPE_WIDTH / 2,
             0,
             PIPE_WIDTH,
@@ -310,7 +313,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           ctx.restore();
           // bottom pipe
           ctx.drawImage(
-            pipeImg,
+            sprite,
             p.x,
             p.gapY + GAP,
             PIPE_WIDTH,
@@ -327,8 +330,6 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
             ctx.restore();
           }
         });
-        // reset filter so bird/score aren’t tinted
-        ctx.filter = "none";
         ctx.restore();
       }
 
@@ -485,9 +486,36 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         // digits
         const digitPaths = Array.from({ length: 10 }, (_, i) => `${base}/sprites/${i}.png`);
         const digitImgs = await Promise.all(digitPaths.map((p) => loadImage(p)));
+        // Precompute tinted pipe variants for each level (0..MAX_LEVEL)
+        const basePipe = map["pipe-green"];
+        const tints: HTMLCanvasElement[] = [];
+        if (basePipe) {
+          for (let lvl = 0; lvl <= MAX_LEVEL; lvl++) {
+            const deg = lvl * 45; // 0..360
+            const c = document.createElement("canvas");
+            c.width = basePipe.width;
+            c.height = basePipe.height;
+            const cctx = c.getContext("2d");
+            if (cctx) {
+              // draw original
+              cctx.drawImage(basePipe, 0, 0);
+              // overlay a color with multiply to tint while preserving shading
+              cctx.globalCompositeOperation = "multiply";
+              cctx.fillStyle = `hsl(${deg}, 80%, 60%)`;
+              cctx.fillRect(0, 0, c.width, c.height);
+              // keep alpha of original sprite
+              cctx.globalCompositeOperation = "destination-in";
+              cctx.drawImage(basePipe, 0, 0);
+              cctx.globalCompositeOperation = "source-over";
+            }
+            tints.push(c);
+          }
+        }
+
         if (!cancelled) {
           audioRef.current = audioMap;
           digitsRef.current = digitImgs;
+          tintedPipesRef.current = tints;
           setAssetsLoaded(true);
         }
       } catch {

@@ -35,6 +35,8 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
 
   // Assets
   const [assetsLoaded, setAssetsLoaded] = useState(false);
+  // Use a ref for the RAF loop so it sees live asset state
+  const assetsLoadedRef = useRef<boolean>(false);
   const imagesRef = useRef<{ [k: string]: HTMLImageElement }>({});
   const audioRef = useRef<{ [k: string]: HTMLAudioElement }>({});
   const birdFrameRef = useRef<number>(0);
@@ -293,9 +295,6 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
       const hScale = H / BASE_HEIGHT;
       const PIPE_WIDTH = BASE_PIPE_WIDTH * wScale;
       // difficulty-adjusted gap for drawing to match collisions
-      {
-        /* scope block to avoid leaking variables */
-      }
       const levelDraw = Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10));
       const gapMulDraw = Math.max(1 - GAP_REDUCTION_PER_LEVEL * levelDraw, 0.65);
       const GAP = Math.max(60 * hScale, BASE_GAP * hScale * gapMulDraw);
@@ -305,7 +304,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
       ctx.clearRect(0, 0, W, H);
       // background image (draw if loaded, otherwise sky color)
       const bg = imagesRef.current["background-day"];
-      if (bg && assetsLoaded) {
+      if (bg && assetsLoadedRef.current) {
         ctx.drawImage(bg, 0, 0, W, H);
       } else {
         // fallback sky while assets load
@@ -314,7 +313,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
       }
       // ground/base image (if loaded); otherwise a simple ground strip
       const baseImg = imagesRef.current["base"];
-      if (baseImg && assetsLoaded) {
+      if (baseImg && assetsLoadedRef.current) {
         const baseH = Math.max(1, H - GROUND_Y);
         const scale = baseH / baseImg.height;
         const tileW = baseImg.width * scale;
@@ -331,7 +330,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
       const levelIdx = Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10));
       const tintedPipe = tintedPipesRef.current[levelIdx];
       const pipeImg = imagesRef.current["pipe-green"];
-      if ((tintedPipe || pipeImg) && assetsLoaded) {
+      if ((tintedPipe || pipeImg) && assetsLoadedRef.current) {
         ctx.save();
         const sprite = tintedPipe || pipeImg;
         pipes.current.forEach((p) => {
@@ -377,7 +376,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         imagesRef.current["yellowbird-downflap"],
       ];
       const frame = frames[birdFrameRef.current % frames.length];
-      if (frame && assetsLoaded) {
+      if (frame && assetsLoadedRef.current) {
         const bw = 34 * Math.min(wScale, hScale); // nominal sprite size ~34x24
         const bh = 24 * Math.min(wScale, hScale);
         // rotate slightly based on velocity
@@ -392,7 +391,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   // score using digit sprites only when available (skip until loaded)
       const digits = digitsRef.current;
   const sStr = String(scoreRef.current);
-      if (digits.length === 10 && assetsLoaded) {
+      if (digits.length === 10 && assetsLoadedRef.current) {
         const dH = 36 * Math.min(wScale, hScale);
         const dW = 24 * Math.min(wScale, hScale);
         const totalW = dW * sStr.length;
@@ -410,7 +409,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
       if (!runningRef.current) {
         // show start message image
         const msg = imagesRef.current["message"];
-        if (msg && assetsLoaded) {
+        if (msg && assetsLoadedRef.current) {
           const iw = msg.width;
           const ih = msg.height;
           const scale = Math.min(1, (W * 0.7) / iw);
@@ -562,10 +561,14 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           audioRef.current = audioMap;
           digitsRef.current = digitImgs;
           tintedPipesRef.current = tints;
+          assetsLoadedRef.current = true;
           setAssetsLoaded(true);
         }
       } catch {
-        if (!cancelled) setAssetsLoaded(false);
+        if (!cancelled) {
+          assetsLoadedRef.current = false;
+          setAssetsLoaded(false);
+        }
       }
     }
     load();

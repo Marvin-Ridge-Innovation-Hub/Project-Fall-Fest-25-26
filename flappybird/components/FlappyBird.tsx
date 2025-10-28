@@ -70,6 +70,9 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   const wingPoolRef = useRef<HTMLAudioElement[]>([]);
   const wingPoolIdxRef = useRef<number>(0);
   const wingLastAtRef = useRef<number>(0);
+  // WebAudio for instant, non-blocking wing sound on mobile
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const wingBufferRef = useRef<AudioBuffer | null>(null);
 
   const reset = useCallback(() => {
     setScore(0);
@@ -101,22 +104,17 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
     if (gameOverRef.current) return;
     const hScale = heightRef.current / BASE_HEIGHT;
     birdV.current = BASE_FLAP * hScale;
-    // play wing sound using a small audio pool with throttling to avoid stutter on mobile
+    // play wing sound instantly using WebAudio (non-blocking, best for mobile)
     const now = performance.now();
-    if (now - wingLastAtRef.current > 120) {
-      const pool = wingPoolRef.current;
-      const baseWing = audioRef.current["wing"];
-      let a: HTMLAudioElement | undefined = undefined;
-      if (pool.length > 0) {
-        a = pool[wingPoolIdxRef.current % pool.length];
-        wingPoolIdxRef.current = (wingPoolIdxRef.current + 1) % pool.length;
-      } else if (baseWing) {
-        a = baseWing;
-      }
-      if (a) {
+    if (now - wingLastAtRef.current > 80) {
+      const ctx = audioCtxRef.current;
+      const buffer = wingBufferRef.current;
+      if (ctx && buffer) {
         try {
-          a.currentTime = 0;
-          a.play();
+          const source = ctx.createBufferSource();
+          source.buffer = buffer;
+          source.connect(ctx.destination);
+          source.start(0);
         } catch {}
       }
       wingLastAtRef.current = now;
@@ -530,6 +528,20 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         // digits
         const digitPaths = Array.from({ length: 10 }, (_, i) => `${base}/sprites/${i}.png`);
         const digitImgs = await Promise.all(digitPaths.map((p) => loadImage(p)));
+        
+        // Load wing sound into WebAudio buffer for instant, non-blocking playback on mobile
+        let wingBuffer: AudioBuffer | null = null;
+        let audioCtx: AudioContext | null = null;
+        try {
+          audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+          const wingSrc = `${base}/audio/wing.wav`;
+          const response = await fetch(wingSrc);
+          const arrayBuffer = await response.arrayBuffer();
+          wingBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+        } catch {
+          // WebAudio not available or decode failed; fall back to HTMLAudio
+        }
+        
         // Precompute tinted pipe variants for each level (0..MAX_LEVEL)
         const basePipe = map["pipe-green"];
         const tints: HTMLCanvasElement[] = [];
@@ -561,6 +573,8 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           audioRef.current = audioMap;
           digitsRef.current = digitImgs;
           tintedPipesRef.current = tints;
+          audioCtxRef.current = audioCtx;
+          wingBufferRef.current = wingBuffer;
           assetsLoadedRef.current = true;
           setAssetsLoaded(true);
         }

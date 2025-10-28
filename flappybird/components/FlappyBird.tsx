@@ -471,10 +471,10 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         if (msg && assetsLoadedRef.current) {
           const iw = msg.width;
           const ih = msg.height;
-          const scale = Math.min(1, (W * 0.7) / iw);
+          const scale = Math.min(1, (W * 0.8) / iw); // Increased from 0.7 to 0.8 for better visibility
           const w = iw * scale;
           const h = ih * scale;
-          ctx.drawImage(msg, (W - w) / 2, H * 0.35 - h / 2, w, h);
+          ctx.drawImage(msg, (W - w) / 2, H * 0.4 - h / 2, w, h); // Moved down from 0.35 to 0.4 for better positioning
         } else {
           // fallback start text
           ctx.fillStyle = "rgba(0,0,0,0.55)";

@@ -347,9 +347,9 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         
         // Only move pipes if not in victory flyout
         if (!victoryFlyoutRef.current) {
-          pipes.current.forEach((p) => (p.x -= dx)); // Removed * 3 multiplier
-          // Update parallax offset (background scrolls at 30% of foreground speed)
-          parallaxOffsetRef.current += dx * 0.3;
+          pipes.current.forEach((p) => (p.x -= dx));
+          // Update parallax offset (raw dx, each layer will apply its own speed multiplier)
+          parallaxOffsetRef.current += dx;
         }
         
         // remove offscreen
@@ -667,8 +667,9 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
             // Scale background to cover height, tile horizontally with parallax offset
             const bgScale = H / bg.height;
             const bgW = bg.width * bgScale;
-            // Snap and slightly overlap tiles to remove thin slits on some DPRs
-            const parallaxX = Math.floor((-parallaxOffsetRef.current % bgW));
+            // Apply slower parallax speed for background (30% of pipe speed)
+            const bgParallax = parallaxOffsetRef.current * 0.3;
+            const parallaxX = Math.floor((-bgParallax % bgW));
             // Draw multiple tiles to cover the width with parallax
             for (let x = parallaxX - bgW; x < W + bgW; x += bgW) {
               const xi = Math.floor(x) - 1; // bleed by 1px on the left
@@ -680,19 +681,36 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           // City backgrounds with multi-layer parallax
           const cityLayers = cityBackgroundsRef.current[currentBgIndex.current - 1];
           if (cityLayers && cityLayers.length > 0) {
-            // Render each layer with increasing parallax speed (layer 1 = slowest, higher layers = faster)
+            // Calculate parallax speeds dynamically based on number of layers
+            // We want layers to range from slow (far) to faster (near), but never faster than pipes
+            // Example: 5 layers -> speeds: 0.15x, 0.30x, 0.45x, 0.60x, 0.75x
+            // Example: 6 layers -> speeds: 0.12x, 0.24x, 0.36x, 0.48x, 0.60x, 0.72x
+            const numLayers = cityLayers.length;
+            const maxSpeed = 0.8; // Maximum parallax speed (80% of pipe speed)
+            const minSpeed = 0.15; // Minimum parallax speed for farthest layer
+            
+            // Render each layer with increasing parallax speed
             cityLayers.forEach((layerImg, layerIndex) => {
-              // Parallax speed increases with layer index: 0.1x, 0.2x, 0.3x, etc.
-              const parallaxSpeed = (layerIndex + 1) * 0.1;
+              // Distribute speeds evenly from minSpeed to maxSpeed
+              const speedRatio = numLayers > 1 ? layerIndex / (numLayers - 1) : 0;
+              const parallaxSpeed = minSpeed + (speedRatio * (maxSpeed - minSpeed));
               const layerParallax = parallaxOffsetRef.current * parallaxSpeed;
               
-              const bgScale = H / layerImg.height;
-              const bgW = layerImg.width * bgScale;
-              const parallaxX = Math.floor((-layerParallax % bgW));
+              // Each layer has its own scale and width
+              const layerScale = H / layerImg.height;
+              const layerWidth = layerImg.width * layerScale;
               
-              for (let x = parallaxX - bgW; x < W + bgW; x += bgW) {
+              // Calculate how many times this specific layer needs to be tiled
+              const tilesNeeded = Math.ceil(W / layerWidth) + 2;
+              
+              // Calculate starting position for this layer's parallax offset
+              const offsetX = -(layerParallax % layerWidth);
+              
+              // Draw enough tiles to cover the viewport with this layer
+              for (let tileIdx = 0; tileIdx < tilesNeeded; tileIdx++) {
+                const x = offsetX + (tileIdx * layerWidth);
                 const xi = Math.floor(x) - 1;
-                const ww = Math.ceil(bgW) + 2;
+                const ww = Math.ceil(layerWidth) + 2;
                 ctx.drawImage(layerImg, xi, 0, ww, Math.ceil(H));
               }
             });
@@ -1028,7 +1046,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         for (let cityNum = 1; cityNum <= 8; cityNum++) {
           const cityBase = `/free-city-backgrounds-pixel-art/city ${cityNum}`;
           // Try loading layers 1-10 (not all cities have all layers)
-          const layerPromises = [1, 2, 3, 4, 5, 6, 7, 10].map(async (layerNum) => {
+          const layerPromises = Array.from({ length: 10 }, (_, i) => i + 1).map(async (layerNum) => {
             try {
               return await loadImage(`${cityBase}/${layerNum}.png`);
             } catch {

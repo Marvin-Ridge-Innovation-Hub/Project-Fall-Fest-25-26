@@ -7,22 +7,23 @@ const BASE_WIDTH = 480;
 const BASE_HEIGHT = 640;
 const BASE_PIPE_WIDTH = 70;
 const BASE_GAP = 160;
-const PIPE_INTERVAL_MS = 1300; // Increased for better spacing between pipes
+const PIPE_INTERVAL_MS = 1400; // Increased for better spacing between pipes
 const BASE_SPEED = 3.5; // Increased for better game feel
 const BASE_GRAVITY = 0.45; // velocity per frame (vertical)
 const BASE_FLAP = -8.5; // jump impulse (vertical)
 // Difficulty scaling
 const MAX_LEVEL = 8; // stop scaling after score >= 80
-const SPEED_PER_LEVEL = 0.06; // Reduced from 0.08 for more gradual difficulty increase
-const GRAVITY_PER_LEVEL = 0.03; // Reduced from 0.04
-const GAP_REDUCTION_PER_LEVEL = 0.05; // Reduced from 0.06
-const INTERVAL_REDUCTION_MS_PER_LEVEL = 90; // Reduced from 70ms spawn interval per level
+const SPEED_PER_LEVEL = 0.05; // Reduced from 0.08 for more gradual difficulty increase
+const GRAVITY_PER_LEVEL = 0.04; // Reduced from 0.04
+const GAP_REDUCTION_PER_LEVEL = 0.02; // Reduced from 0.06
+const INTERVAL_REDUCTION_MS_PER_LEVEL = 50; // Reduced from 70ms spawn interval per level
 
 type Pipe = {
   x: number;
   gapY: number;
   passed: boolean;
   hasTrigger?: boolean;
+  isFinishLine?: boolean;
 };
 
 export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { onScoreSubmitted: () => void; fullScreen?: boolean }) {
@@ -45,14 +46,26 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   const digitsRef = useRef<HTMLImageElement[]>([]);
   // Pre-tinted pipe sprite variants per difficulty level to avoid per-frame filters (mobile perf)
   const tintedPipesRef = useRef<HTMLCanvasElement[]>([]);
+  // Computed color configuration per level (matched to background dominant colors)
+  const pipeColorConfigRef = useRef<{ hues: number[]; saturations: number[]; lightnesses: number[] }>({
+    hues: [],
+    saturations: [],
+    lightnesses: [],
+  });
 
   const [running, setRunning] = useState<boolean>(false);
   const [gameOver, setGameOver] = useState<boolean>(false);
+  const [gameWon, setGameWon] = useState<boolean>(false);
   const [score, setScore] = useState<number>(0);
   // mirror critical states into refs so the RAF loop doesn't depend on React rerenders
   const runningRef = useRef<boolean>(false);
   const gameOverRef = useRef<boolean>(false);
   const scoreRef = useRef<number>(0);
+  const victoryFlyoutRef = useRef<boolean>(false); // Track if bird is flying out after victory
+  const victoryFlyoutStartRef = useRef<number>(0); // When the flyout started
+  const victoryCompleteRef = useRef<boolean>(false); // Track if bird has completely flown off screen
+  // Dev: allow starting score from URL parameter (e.g., ?startScore=85)
+  const startScoreRef = useRef<number>(0);
   const [studentId, setStudentId] = useState<string>("");
   const [firstName, setFirstName] = useState<string>("");
   const [lastInitial, setLastInitial] = useState<string>("");
@@ -62,6 +75,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   // game state refs (for raf loop without stale closures)
   const birdY = useRef<number>(BASE_HEIGHT / 2);
   const birdV = useRef<number>(0);
+  const birdX = useRef<number>(0); // Track bird X position for victory flyout
   const pipes = useRef<Pipe[]>([]);
   const lastSpawnAt = useRef<number>(0);
   const pipeSpawnCount = useRef<number>(0);
@@ -79,23 +93,54 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   const audioCtxRef = useRef<AudioContext | null>(null);
   const wingBufferRef = useRef<AudioBuffer | null>(null);
   const pointBufferRef = useRef<AudioBuffer | null>(null);
+  
+  // Background music refs
+  const backgroundMusicRef = useRef<HTMLAudioElement | null>(null);
+  const currentMusicLevelRef = useRef<number>(-1); // Track which music is playing
+  
+  // Portal sound refs
+  const portalIdleSoundRef = useRef<HTMLAudioElement | null>(null);
+  const portalWarpSoundRef = useRef<HTMLAudioElement | null>(null);
+  const activePortalRef = useRef<Pipe | null>(null); // Track which portal we're near
 
   const reset = useCallback(() => {
-    setScore(0);
+    const startScore = startScoreRef.current;
+    setScore(startScore);
     setGameOver(false);
+    setGameWon(false);
     setRunning(false);
     // keep refs in sync
-    scoreRef.current = 0;
+    scoreRef.current = startScore;
     gameOverRef.current = false;
     runningRef.current = false;
     const H = heightRef.current;
     birdY.current = H / 2;
     birdV.current = 0;
+    birdX.current = 0;
     pipes.current = [];
     lastSpawnAt.current = 0;
   pipeSpawnCount.current = 0;
-    currentBgIndex.current = 0; // Reset to default flappy bird background
+    victoryFlyoutRef.current = false;
+    victoryFlyoutStartRef.current = 0;
+    victoryCompleteRef.current = false;
+    currentBgIndex.current = Math.floor(startScore / 10); // Start with correct background
     parallaxOffsetRef.current = 0;
+    
+    // Stop and reset background music
+    if (backgroundMusicRef.current) {
+      backgroundMusicRef.current.pause();
+      backgroundMusicRef.current.currentTime = 0;
+    }
+    currentMusicLevelRef.current = -1;
+    
+    // Stop portal sounds
+    if (portalIdleSoundRef.current) {
+      portalIdleSoundRef.current.pause();
+      portalIdleSoundRef.current.currentTime = 0;
+      portalIdleSoundRef.current.volume = 0;
+    }
+    activePortalRef.current = null;
+    
     // reset submission fields
     setStudentId("");
     setFirstName("");
@@ -103,11 +148,37 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
     setRequiresProfile(false);
   }, []);
 
+  // Dev: read startScore from URL parameter on mount
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const startScoreParam = params.get('startScore');
+      if (startScoreParam) {
+        const parsed = parseInt(startScoreParam, 10);
+        if (!isNaN(parsed) && parsed >= 0) {
+          startScoreRef.current = parsed;
+          setScore(parsed);
+          scoreRef.current = parsed;
+          currentBgIndex.current = Math.floor(parsed / 10);
+          console.log('🎮 Dev mode: Starting at score', parsed);
+        }
+      }
+    }
+  }, []);
+
   const flap = useCallback(() => {
+    // Unlock audio context on iOS (required for WebAudio to work)
+    const ctx = audioCtxRef.current;
+    if (ctx && ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+    
     // start game on first tap
     if (!runningRef.current && !gameOverRef.current) {
       setRunning(true);
       runningRef.current = true;
+      // Initialize bird X position when game starts
+      birdX.current = widthRef.current * 0.25;
     }
     if (gameOverRef.current) return;
     const hScale = heightRef.current / BASE_HEIGHT;
@@ -115,7 +186,6 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
     // play wing sound instantly using WebAudio (non-blocking, best for mobile)
     const now = performance.now();
     if (now - wingLastAtRef.current > 80) {
-      const ctx = audioCtxRef.current;
       const buffer = wingBufferRef.current;
       if (ctx && buffer) {
         try {
@@ -174,6 +244,12 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
     let lastTime = performance.now();
 
     const spawnPipe = () => {
+      // Don't spawn more pipes after the finish line (absolute pipe 90)
+      const nextAbsolutePipeNumber = startScoreRef.current + pipeSpawnCount.current + 1;
+      if (nextAbsolutePipeNumber > 90) {
+        return;
+      }
+      
       const W = widthRef.current;
       const H = heightRef.current;
       const wScale = W / BASE_WIDTH;
@@ -188,8 +264,14 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
       const range = Math.max(1, H - GAP - margin * 2);
       const gapY = Math.floor(Math.random() * range) + margin;
   pipeSpawnCount.current += 1;
-  const hasTrigger = pipeSpawnCount.current % 10 === 0;
-  pipes.current.push({ x: W + 20 * wScale, gapY, passed: false, hasTrigger });
+  // Adjust for start score: trigger should be absolute, not relative
+  const absolutePipeNumber = startScoreRef.current + pipeSpawnCount.current;
+  const hasTrigger = absolutePipeNumber % 10 === 0;
+  const isFinishLine = absolutePipeNumber === 90;
+  if (isFinishLine) {
+    console.log('🏁 Finish line spawned! Absolute pipe:', absolutePipeNumber, 'Spawn count:', pipeSpawnCount.current);
+  }
+  pipes.current.push({ x: W + 20 * wScale, gapY, passed: false, hasTrigger, isFinishLine });
     };
 
     const loop = (now: number) => {
@@ -226,18 +308,100 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           birdFrameTimeRef.current = 0;
         }
 
-        // move pipes
+        // move pipes (freeze during victory flyout)
   const W = widthRef.current;
   const wScale = W / BASE_WIDTH;
   const hScalePipe = heightRef.current / BASE_HEIGHT;
   const speedMul = Math.min(1 + SPEED_PER_LEVEL * Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10)), 1.6);
   const dx = BASE_SPEED * speedMul * wScale * (dt / 16.67);
-        pipes.current.forEach((p) => (p.x -= dx)); // Removed * 3 multiplier
-        // Update parallax offset (background scrolls at 30% of foreground speed)
-        parallaxOffsetRef.current += dx * 0.3;
+        
+        // Only move pipes if not in victory flyout
+        if (!victoryFlyoutRef.current) {
+          pipes.current.forEach((p) => (p.x -= dx)); // Removed * 3 multiplier
+          // Update parallax offset (background scrolls at 30% of foreground speed)
+          parallaxOffsetRef.current += dx * 0.3;
+        }
+        
         // remove offscreen
         const PIPE_WIDTH = BASE_PIPE_WIDTH * hScalePipe; // Changed from wScale to hScale
         pipes.current = pipes.current.filter((p) => p.x + PIPE_WIDTH > -10 * wScale);
+
+        // Portal sound effects (fade in/out idle sound, trigger warp when passing through)
+        if (!victoryFlyoutRef.current) {
+          const birdPosX = widthRef.current * 0.25;
+          let nearestPortal: Pipe | null = null;
+          let nearestDistance = Infinity;
+          
+          // Find the nearest portal ahead of the bird
+          pipes.current.forEach((p) => {
+            if (p.hasTrigger && !p.isFinishLine && !p.passed) {
+              const portalCenterX = p.x + PIPE_WIDTH / 2;
+              const distance = portalCenterX - birdPosX;
+              
+              // Only consider portals ahead of the bird
+              if (distance > 0 && distance < nearestDistance) {
+                nearestDistance = distance;
+                nearestPortal = p;
+              }
+            }
+          });
+          
+          const idleSound = portalIdleSoundRef.current;
+          const warpSound = portalWarpSoundRef.current;
+          
+          if (nearestPortal && idleSound && warpSound) {
+            const fadeInDistance = PIPE_WIDTH * 1.5; // Start fading in 1.5 pipes away
+            const warpDistance = PIPE_WIDTH * 0.3; // Trigger warp when very close
+            
+            // Calculate volume based on distance (0 to 1)
+            const fadeVolume = Math.max(0, Math.min(1, 1 - (nearestDistance / fadeInDistance)));
+            
+            // Update idle sound volume
+            idleSound.volume = fadeVolume * 0.4; // Max 40% volume for idle
+            
+            // Start playing idle sound if we're in range
+            if (fadeVolume > 0 && idleSound.paused) {
+              idleSound.play().catch(() => {});
+            }
+            
+            // Trigger warp sound when very close (only once per portal)
+            if (nearestDistance < warpDistance && activePortalRef.current !== nearestPortal) {
+              activePortalRef.current = nearestPortal;
+              warpSound.currentTime = 0;
+              warpSound.volume = 0.5;
+              warpSound.play().catch(() => {});
+            }
+            
+            // Fade out when we've passed the portal
+            if (nearestDistance <= 0 || fadeVolume <= 0) {
+              if (!idleSound.paused) {
+                // Fade out over a short time
+                const fadeOutSpeed = 0.05;
+                if (idleSound.volume > fadeOutSpeed) {
+                  idleSound.volume -= fadeOutSpeed;
+                } else {
+                  idleSound.pause();
+                  idleSound.currentTime = 0;
+                  idleSound.volume = 0;
+                  activePortalRef.current = null;
+                }
+              }
+            }
+          } else {
+            // No portal nearby, fade out idle sound
+            if (idleSound && !idleSound.paused) {
+              const fadeOutSpeed = 0.05;
+              if (idleSound.volume > fadeOutSpeed) {
+                idleSound.volume -= fadeOutSpeed;
+              } else {
+                idleSound.pause();
+                idleSound.currentTime = 0;
+                idleSound.volume = 0;
+                activePortalRef.current = null;
+              }
+            }
+          }
+        }
 
         // scoring and collisions
         pipes.current.forEach((p) => {
@@ -248,62 +412,183 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           const level = Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10));
           const gapMul = Math.max(1 - GAP_REDUCTION_PER_LEVEL * level, 0.65);
           const GAP = Math.max(60 * hS, BASE_GAP * hS * gapMul);
-          const PIPE_WIDTH = BASE_PIPE_WIDTH * hS; // Changed from wS to hS
-          const birdX = W2 * 0.25; // bird x
+          const birdPosX = W2 * 0.25; // bird x position
           const r = 12 * Math.min(wS, hS); // bird radius
-          if (!p.passed && p.x + PIPE_WIDTH < birdX) {
+          
+          // Check if bird is approaching the finish line and trigger flyout early
+          if (p.isFinishLine && !p.passed && !victoryFlyoutRef.current && p.x + PIPE_WIDTH < birdPosX + 50 * wS) {
+            console.log('🎉 APPROACHING FINISH LINE! Starting victory flyout...');
+            // Start victory flyout animation before passing the pipe
+            victoryFlyoutRef.current = true;
+            victoryFlyoutStartRef.current = now;
+            birdX.current = W2 * 0.25; // Initialize bird X position
+            birdV.current = BASE_FLAP * hS * 0.7; // Set upward velocity to keep bird airborne
+            // Don't play sound yet - will play when bird goes off screen
+          }
+          
+          if (!p.passed && p.x + PIPE_WIDTH < birdPosX) {
             p.passed = true;
-            setScore((s) => {
-              const ns = s + 1;
-              scoreRef.current = ns;
-              // Update background every 10 points: 0-9=default, 10-19=city1, 20-29=city2, etc.
-              const newBgIndex = Math.floor(ns / 10);
-              if (newBgIndex !== currentBgIndex.current && newBgIndex <= 8) {
-                currentBgIndex.current = newBgIndex;
+            
+            // Only update score if not finish line (finish line score update happens when bird flies off)
+            if (!p.isFinishLine) {
+              setScore((s) => {
+                const ns = s + 1;
+                scoreRef.current = ns;
+                // Update background every 10 points: 0-9=default, 10-19=city1, 20-29=city2, etc.
+                const newBgIndex = Math.floor(ns / 10);
+                if (newBgIndex !== currentBgIndex.current && newBgIndex <= 8) {
+                  currentBgIndex.current = newBgIndex;
+                }
+                
+                // Switch background music at portals (every 10 points starting from 10)
+                // Level 0 (0-9): no music
+                // Level 1 (10-19): song 1
+                // Level 2 (20-29): song 2, etc.
+                const musicLevel = Math.floor(ns / 10);
+                if (musicLevel > 0 && musicLevel <= 8 && musicLevel !== currentMusicLevelRef.current) {
+                  const musicFiles = [
+                    '/music/emotional-orchestra-short-145091.mp3',
+                    '/music/epic-love-inspirational-romantic-cinematic-30-seconds-406069.mp3',
+                    '/music/epic-middle-eastern-30-seconds-percussion-389431.mp3',
+                    '/music/falling-grace-348198.mp3',
+                    '/music/hopeful-acoustic-travel-30-seconds-368800.mp3',
+                    '/music/instrumental-music-for-video-blog-stories-cyborg-in-me-27-seconds-188532.mp3',
+                    '/music/pizzicato-play-30-seconds-children-music-394553.mp3',
+                    '/music/western-journey-30-seconds-183089.mp3'
+                  ];
+                  
+                  // Stop current music if playing
+                  if (backgroundMusicRef.current) {
+                    backgroundMusicRef.current.pause();
+                  }
+                  
+                  // Start new music for this level
+                  const musicFile = musicFiles[musicLevel - 1];
+                  if (musicFile) {
+                    const audio = new Audio(musicFile);
+                    audio.volume = 0.6; // Quieter than sound effects
+                    audio.loop = true;
+                    audio.play().catch(() => {
+                      // Autoplay might be blocked, will play on next user interaction
+                    });
+                    backgroundMusicRef.current = audio;
+                    currentMusicLevelRef.current = musicLevel;
+                    console.log('🎵 Playing music level', musicLevel, ':', musicFile);
+                  }
+                }
+                
+                return ns;
+              });
+              // Play point sound using WebAudio (instant, non-blocking)
+              const ctx = audioCtxRef.current;
+              const buffer = pointBufferRef.current;
+              if (ctx && buffer) {
+                try {
+                  const source = ctx.createBufferSource();
+                  source.buffer = buffer;
+                  source.connect(ctx.destination);
+                  source.start(0);
+                } catch {}
               }
-              return ns;
-            });
-            // Play point sound using WebAudio (instant, non-blocking)
-            const ctx = audioCtxRef.current;
-            const buffer = pointBufferRef.current;
-            if (ctx && buffer) {
-              try {
-                const source = ctx.createBufferSource();
-                source.buffer = buffer;
-                source.connect(ctx.destination);
-                source.start(0);
-              } catch {}
             }
           }
-          // collision check (AABB around bird)
-          const inPipeX = birdX + r > p.x && birdX - r < p.x + PIPE_WIDTH;
-          const topBottomY = birdY.current - r < p.gapY || birdY.current + r > p.gapY + GAP;
-          if (inPipeX && topBottomY) {
-            setGameOver(true);
-            gameOverRef.current = true;
-            const hit = audioRef.current["hit"];
-            const die = audioRef.current["die"];
-            try {
-              if (hit) {
-                hit.currentTime = 0;
-                hit.play();
-              }
-              if (die) {
-                die.currentTime = 0;
-                die.play();
-              }
-            } catch {}
+          // collision check (AABB around bird) - skip during victory flyout
+          if (!victoryFlyoutRef.current) {
+            const inPipeX = birdPosX + r > p.x && birdPosX - r < p.x + PIPE_WIDTH;
+            const topBottomY = birdY.current - r < p.gapY || birdY.current + r > p.gapY + GAP;
+            if (inPipeX && topBottomY) {
+              setGameOver(true);
+              gameOverRef.current = true;
+              const hit = audioRef.current["hit"];
+              const die = audioRef.current["die"];
+              try {
+                if (hit) {
+                  hit.currentTime = 0;
+                  hit.play();
+                }
+                if (die) {
+                  die.currentTime = 0;
+                  die.play();
+                }
+              } catch {}
+            }
           }
 
         });
 
-        // ceiling collision (bird hits top)
-        const H3 = heightRef.current;
-        const hS2 = H3 / BASE_HEIGHT;
-        const r2 = 12 * Math.min(widthRef.current / BASE_WIDTH, hS2);
-        if (birdY.current - r2 <= 0 || birdY.current + r2 >= H3) {
-          setGameOver(true);
-          gameOverRef.current = true;
+        // ceiling collision (bird hits top or bottom) - skip during victory flyout
+        if (!victoryFlyoutRef.current) {
+          const H3 = heightRef.current;
+          const hS2 = H3 / BASE_HEIGHT;
+          const r2 = 12 * Math.min(widthRef.current / BASE_WIDTH, hS2);
+          if (birdY.current - r2 <= 0 || birdY.current + r2 >= H3) {
+            setGameOver(true);
+            gameOverRef.current = true;
+          }
+        }
+      }
+      
+      // Victory flyout animation (bird flies off screen after crossing finish line)
+      if (victoryFlyoutRef.current && !victoryCompleteRef.current) {
+        const W = widthRef.current;
+        const wScale = W / BASE_WIDTH;
+        const hScale = heightRef.current / BASE_HEIGHT;
+        const dx = BASE_SPEED * 1.6 * wScale * (dt / 16.67); // Move at max speed
+        
+        const timeSinceFlyout = now - victoryFlyoutStartRef.current;
+        
+        // Auto-flap every 250ms to keep bird up with a smooth pattern
+        const flapInterval = 250;
+        const lastFlapTime = Math.floor((timeSinceFlyout - dt) / flapInterval) * flapInterval;
+        const currentFlapTime = Math.floor(timeSinceFlyout / flapInterval) * flapInterval;
+        
+        if (currentFlapTime > lastFlapTime) {
+          birdV.current = BASE_FLAP * hScale * 0.9; // Slightly gentler flaps
+        }
+        
+        // Apply physics (gravity + velocity)
+        const GRAVITY = BASE_GRAVITY * hScale * 1.2; // Reduced gravity for smoother flight
+        birdV.current += GRAVITY * (dt / 16.67);
+        birdY.current += birdV.current * (dt / 16.67);
+        
+        // Move bird right
+        birdX.current += dx;
+        
+        // Check if bird is off screen
+        if (birdX.current > W + 50 * wScale) {
+          console.log('🏆 Bird flew off screen! Incrementing score to 90...');
+          victoryCompleteRef.current = true; // Mark as complete to stop further updates
+          victoryFlyoutRef.current = false; // Stop flyout animation
+          
+          // Increment score to 90
+          setScore((s) => {
+            const ns = s + 1;
+            scoreRef.current = ns;
+            return ns;
+          });
+          
+          // Play victory sound (point sound 3 times)
+          const ctx = audioCtxRef.current;
+          const buffer = pointBufferRef.current;
+          if (ctx && buffer) {
+            try {
+              for (let i = 0; i < 3; i++) {
+                setTimeout(() => {
+                  const source = ctx.createBufferSource();
+                  source.buffer = buffer;
+                  source.connect(ctx.destination);
+                  source.start(0);
+                }, i * 100);
+              }
+            } catch {}
+          }
+          
+          // Show victory modal after 500ms
+          setTimeout(() => {
+            setGameWon(true);
+            setGameOver(true);
+            gameOverRef.current = true;
+          }, 500);
         }
       }
 
@@ -407,18 +692,104 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
             ctx.drawImage(sprite, px, y, pw, scaledSpriteH);
           }
 
-          // draw translucent trigger rectangle spanning the gap (every 10th pipe only)
-          if (p.hasTrigger) {
+          // draw animated portal in the gap (every 10th pipe only)
+          // Don't show portal on finish line
+          if (p.hasTrigger && !p.isFinishLine) {
             ctx.save();
-            ctx.filter = "none"; // do not tint the rectangle
+            ctx.filter = "none";
+            
             const levelIdx = Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10));
-            const colorHues = [120, 55, 30, 0, 280, 230, 195, 330, 0]; // match pipe colors
-            const levelHue = colorHues[levelIdx] || 0;
-            const levelSat = levelIdx === 8 ? 0 : 90; // desaturate for black
-            const levelLight = levelIdx === 8 ? 20 : 60; // darker for black
-            ctx.fillStyle = `hsla(${levelHue}, ${levelSat}%, ${levelLight}%, 0.2)`;
-            // Use the same snapped values as the pipes
-            ctx.fillRect(px, gapY, pw, gapH);
+            const cfg = pipeColorConfigRef.current;
+            const levelHue = (cfg.hues && cfg.hues[levelIdx] !== undefined) ? cfg.hues[levelIdx] : 0;
+            const levelSat = (cfg.saturations && cfg.saturations[levelIdx] !== undefined) ? cfg.saturations[levelIdx] : 70;
+            const levelLight = (cfg.lightnesses && cfg.lightnesses[levelIdx] !== undefined) ? cfg.lightnesses[levelIdx] : 50;
+            
+            // Portal center
+            const portalCenterX = px + pw / 2;
+            const portalCenterY = gapY + gapH / 2;
+            const portalRadius = Math.min(pw * 0.8, gapH * 0.4);
+            
+            // Create swirling portal effect with rotating gradient
+            const rotationSpeed = now / 1000; // Rotate based on time
+            
+            // Draw multiple rotating rings for depth effect
+            for (let ring = 3; ring >= 1; ring--) {
+              const ringRadius = portalRadius * (ring / 3);
+              const ringRotation = rotationSpeed * (4 - ring); // Outer rings rotate faster
+              
+              // Create radial gradient for this ring
+              const gradient = ctx.createRadialGradient(
+                portalCenterX, portalCenterY, ringRadius * 0.2,
+                portalCenterX, portalCenterY, ringRadius
+              );
+              
+              // Animate hue shift for swirling effect
+              const hueShift = (rotationSpeed * 50 + ring * 30) % 360;
+              const ringHue = (levelHue + hueShift) % 360;
+              
+              gradient.addColorStop(0, `hsla(${ringHue}, ${levelSat}%, ${levelLight + 20}%, 0.8)`);
+              gradient.addColorStop(0.5, `hsla(${ringHue}, ${levelSat}%, ${levelLight}%, 0.5)`);
+              gradient.addColorStop(1, `hsla(${ringHue}, ${levelSat}%, ${levelLight - 10}%, 0.1)`);
+              
+              ctx.fillStyle = gradient;
+              ctx.beginPath();
+              ctx.arc(portalCenterX, portalCenterY, ringRadius, 0, Math.PI * 2);
+              ctx.fill();
+            }
+            
+            // Draw sparkles/particles around portal
+            const numSparkles = 8;
+            for (let i = 0; i < numSparkles; i++) {
+              const angle = (i / numSparkles) * Math.PI * 2 + rotationSpeed * 2;
+              const sparkleDistance = portalRadius * 1.2;
+              const sparkleX = portalCenterX + Math.cos(angle) * sparkleDistance;
+              const sparkleY = portalCenterY + Math.sin(angle) * sparkleDistance;
+              const sparkleSize = 3 + Math.sin(now / 200 + i) * 2;
+              
+              ctx.fillStyle = `hsla(${levelHue}, ${levelSat}%, ${levelLight + 30}%, ${0.6 + Math.sin(now / 300 + i) * 0.4})`;
+              ctx.beginPath();
+              ctx.arc(sparkleX, sparkleY, sparkleSize, 0, Math.PI * 2);
+              ctx.fill();
+            }
+            
+            ctx.restore();
+          }
+
+          // draw finish line (90th pipe) with checkered pattern
+          if (p.isFinishLine) {
+            ctx.save();
+            ctx.filter = "none";
+            
+            // Draw a waving checkered flag in the gap
+            const flagWidth = pw * 0.85; // Slightly narrower than pipes
+            const flagHeight = gapH * 0.6;
+            const flagX = px + (pw - flagWidth) / 2; // Center horizontally
+            const flagY = gapY + (gapH - flagHeight) / 2; // Center vertically in gap
+            const checkSize = Math.max(8, Math.round(flagWidth / 6));
+            
+            // Draw checkered pattern
+            for (let row = 0; row < Math.ceil(flagHeight / checkSize); row++) {
+              for (let col = 0; col < Math.ceil(flagWidth / checkSize); col++) {
+                const x = flagX + col * checkSize;
+                const y = flagY + row * checkSize + Math.sin((col / 2) * Math.PI / 2 + now / 200) * 3;
+                const isBlack = (row + col) % 2 === 0;
+                ctx.fillStyle = isBlack ? '#000' : '#FFF';
+                ctx.fillRect(
+                  x, 
+                  y, 
+                  Math.min(checkSize, flagWidth - col * checkSize),
+                  Math.min(checkSize, flagHeight - row * checkSize)
+                );
+              }
+            }
+            
+            // Add a pole mounted on the bottom pipe
+            ctx.fillStyle = '#8B4513'; // Brown pole
+            const poleX = flagX - 4;
+            const poleWidth = 4;
+            // Pole goes from bottom pipe up to top of flag
+            ctx.fillRect(poleX, flagY, poleWidth, bottomY - flagY);
+            
             ctx.restore();
           }
         });
@@ -428,20 +799,22 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
       }
 
       // bird sprite (yellow). Skip drawing until loaded.
-      const birdX = W * 0.25;
+      // Use birdX ref during victory flyout, otherwise fixed position
+      const birdDrawX = victoryFlyoutRef.current ? birdX.current : W * 0.25;
       const frames = [
         imagesRef.current["yellowbird-upflap"],
         imagesRef.current["yellowbird-midflap"],
         imagesRef.current["yellowbird-downflap"],
       ];
       const frame = frames[birdFrameRef.current % frames.length];
-      if (frame && assetsLoadedRef.current) {
+      // Don't draw bird if victory is complete (bird has flown off screen)
+      if (frame && assetsLoadedRef.current && !victoryCompleteRef.current) {
         const bw = 34 * Math.min(wScale, hScale); // nominal sprite size ~34x24
         const bh = 24 * Math.min(wScale, hScale);
         // rotate slightly based on velocity
         const angle = Math.max(-0.8, Math.min(0.6, birdV.current / 10));
         ctx.save();
-        ctx.translate(birdX, birdY.current);
+        ctx.translate(birdDrawX, birdY.current);
         ctx.rotate(angle);
         ctx.drawImage(frame, -bw / 2, -bh / 2, bw, bh);
         ctx.restore();
@@ -493,6 +866,19 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
     rafRef.current = requestAnimationFrame(loop);
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      // Stop background music when component unmounts
+      if (backgroundMusicRef.current) {
+        backgroundMusicRef.current.pause();
+        backgroundMusicRef.current = null;
+      }
+      // Stop portal sounds when component unmounts
+      if (portalIdleSoundRef.current) {
+        portalIdleSoundRef.current.pause();
+        portalIdleSoundRef.current = null;
+      }
+      if (portalWarpSoundRef.current) {
+        portalWarpSoundRef.current = null;
+      }
     };
   }, []);
 
@@ -529,6 +915,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           gapY: p.gapY * hRatio,
           passed: p.passed,
           hasTrigger: p.hasTrigger,
+          isFinishLine: p.isFinishLine,
         }));
       }
       widthRef.current = newW;
@@ -603,6 +990,88 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           cityBackgroundsRef.current = cityBgs;
         }
 
+        // Compute dominant colors for each background (default + 8 cities)
+        // Helper: RGB to HSL
+        const rgbToHsl = (r: number, g: number, b: number) => {
+          r /= 255; g /= 255; b /= 255;
+          const max = Math.max(r, g, b), min = Math.min(r, g, b);
+          let h = 0, s = 0;
+          const l = (max + min) / 2;
+          if (max !== min) {
+            const d = max - min;
+            s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+            switch (max) {
+              case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+              case g: h = (b - r) / d + 2; break;
+              case b: h = (r - g) / d + 4; break;
+            }
+            h /= 6;
+          }
+          return { h: h * 360, s: s * 100, l: l * 100 };
+        };
+
+        // Helper: compute dominant HSL via downsampling + hue vector average
+        const computeDominantHSL = (img: HTMLImageElement) => {
+          const sampleW = 96;
+          const scale = sampleW / img.width;
+          const sampleH = Math.max(1, Math.round(img.height * scale));
+          const c = document.createElement('canvas');
+          c.width = sampleW; c.height = sampleH;
+          const cctx = c.getContext('2d');
+          if (!cctx) return { h: 120, s: 70, l: 50 };
+          cctx.drawImage(img, 0, 0, sampleW, sampleH);
+          const data = cctx.getImageData(0, 0, sampleW, sampleH).data;
+          let sumX = 0, sumY = 0, wSum = 0, sSum = 0, lSum = 0;
+          for (let i = 0; i < data.length; i += 4) {
+            const a = data[i + 3] / 255;
+            if (a < 0.3) continue; // ignore transparent
+            const r = data[i], g = data[i + 1], b = data[i + 2];
+            const { h, s, l } = rgbToHsl(r, g, b);
+            // ignore near-gray to avoid clouds/white borders
+            const sat = s / 100;
+            if (sat < 0.12) continue;
+            const weight = sat * a;
+            const rad = (h * Math.PI) / 180;
+            sumX += Math.cos(rad) * weight;
+            sumY += Math.sin(rad) * weight;
+            sSum += s * weight;
+            lSum += l * weight;
+            wSum += weight;
+          }
+          if (wSum === 0) return { h: 120, s: 70, l: 50 };
+          const avgRad = Math.atan2(sumY, sumX);
+          const avgHue = (avgRad * 180) / Math.PI;
+          const hue = (avgHue + 360) % 360;
+          const sat = Math.min(95, Math.max(40, sSum / wSum));
+          const light = Math.min(70, Math.max(30, lSum / wSum));
+          return { h: hue, s: sat, l: light };
+        };
+
+        // Build color arrays for levels 0..8
+        const hues: number[] = new Array(MAX_LEVEL + 1).fill(0);
+        const sats: number[] = new Array(MAX_LEVEL + 1).fill(75);
+        const lights: number[] = new Array(MAX_LEVEL + 1).fill(50);
+
+        // Level 0: force vibrant pure green (classic Flappy Bird)
+        hues[0] = 120; sats[0] = 90; lights[0] = 50;
+
+        // Levels 1..8 from city backgrounds (use farthest layer if available)
+        for (let i = 1; i <= 8; i++) {
+          const layers = cityBgs[i - 1];
+          const src = layers && layers.length > 0 ? layers[0] : undefined;
+          if (src) {
+            const d = computeDominantHSL(src);
+            hues[i] = d.h; sats[i] = d.s; lights[i] = d.l;
+          } else {
+            // reasonable fallback palette
+            const fallbackHues = [0, 190, 280, 30, 330, 230, 180, 0, 270];
+            hues[i] = fallbackHues[i] || 120; sats[i] = 75; lights[i] = 50;
+          }
+        }
+
+        // Persist for use in rendering (e.g., trigger rectangle)
+        pipeColorConfigRef.current = { hues, saturations: sats, lightnesses: lights };
+
         // audio
         const audioMap: { [k: string]: HTMLAudioElement } = {
           wing: new Audio(`${base}/audio/wing.wav`),
@@ -614,6 +1083,17 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           a.preload = "auto";
           a.volume = 0.6;
         });
+        
+        // Load portal sounds
+        const portalIdleSound = new Audio('/portalSounds/idle.mp3');
+        portalIdleSound.loop = true;
+        portalIdleSound.volume = 0;
+        portalIdleSound.preload = "auto";
+        
+        const portalWarpSound = new Audio('/portalSounds/warp.mp3');
+        portalWarpSound.volume = 0.5;
+        portalWarpSound.preload = "auto";
+        
         // digits
         const digitPaths = Array.from({ length: 10 }, (_, i) => `${base}/sprites/${i}.png`);
         const digitImgs = await Promise.all(digitPaths.map((p) => loadImage(p)));
@@ -647,10 +1127,10 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         const tints: HTMLCanvasElement[] = [];
               wingPoolRef.current = wingPool;
         if (basePipe) {
-          // Vibrant color progression: green → yellow → orange → red → purple → navy blue → sky blue → pink → black
-          const colorHues = [120, 55, 30, 0, 280, 230, 195, 330, 0]; // green, yellow, orange, red, purple, navy, sky blue, pink, black
-          const saturations = [85, 95, 95, 95, 90, 95, 85, 90, 0]; // high saturation for vibrant colors, 0 for black
-          const lightnesses = [50, 55, 55, 50, 50, 45, 60, 60, 15]; // adjusted for each color, very low for black
+          // Use computed dominant HSL values matched to backgrounds
+          const colorHues = pipeColorConfigRef.current.hues.length ? pipeColorConfigRef.current.hues : [120, 190, 280, 30, 330, 230, 180, 0, 270];
+          const saturations = pipeColorConfigRef.current.saturations.length ? pipeColorConfigRef.current.saturations : [85, 70, 85, 90, 80, 85, 75, 90, 70];
+          const lightnesses = pipeColorConfigRef.current.lightnesses.length ? pipeColorConfigRef.current.lightnesses : [50, 55, 50, 55, 60, 40, 50, 50, 35];
           
           for (let lvl = 0; lvl <= MAX_LEVEL; lvl++) {
             const hue = colorHues[lvl] || 0;
@@ -698,6 +1178,8 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           audioCtxRef.current = audioCtx;
           wingBufferRef.current = wingBuffer;
           pointBufferRef.current = pointBuffer;
+          portalIdleSoundRef.current = portalIdleSound;
+          portalWarpSoundRef.current = portalWarpSound;
           assetsLoadedRef.current = true;
           setAssetsLoaded(true);
         }
@@ -774,16 +1256,28 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         {gameOver && (
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="relative flex flex-col items-center">
-              <img
-                src="/flappy-bird-assets-master/sprites/gameover.png"
-                alt="Game Over"
-                className="mb-3 w-64 max-w-[80vw] h-auto pointer-events-none select-none"
-                decoding="async"
-                loading="eager"
-              />
+              {gameWon ? (
+                <div className="mb-3 text-center">
+                  <div className="text-6xl mb-2 animate-bounce">🏆</div>
+                  <div className="text-4xl font-bold bg-gradient-to-r from-yellow-400 via-yellow-500 to-yellow-600 bg-clip-text text-transparent drop-shadow-lg">
+                    VICTORY!
+                  </div>
+                  <div className="text-xl font-semibold text-yellow-600 dark:text-yellow-400 mt-1">
+                    You reached the finish line! 🏁
+                  </div>
+                </div>
+              ) : (
+                <img
+                  src="/flappy-bird-assets-master/sprites/gameover.png"
+                  alt="Game Over"
+                  className="mb-3 w-64 max-w-[80vw] h-auto pointer-events-none select-none"
+                  decoding="async"
+                  loading="eager"
+                />
+              )}
               <div className="w-[85%] max-w-sm rounded-xl bg-white/95 dark:bg-zinc-900/95 backdrop-blur-sm p-5 border-2 border-blue-200 dark:border-blue-800 shadow-2xl">
               <div className="text-xl font-bold mb-2 bg-gradient-to-r from-blue-600 to-indigo-600 dark:from-blue-400 dark:to-indigo-400 bg-clip-text text-transparent">
-                Score: {score} 🎯
+                Score: {score} {gameWon ? '🎉' : '🎯'}
               </div>
               <div className="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
                 Enter your Student ID (or teacher email prefix) to submit your score.

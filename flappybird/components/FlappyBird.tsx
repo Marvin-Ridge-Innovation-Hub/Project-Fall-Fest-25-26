@@ -70,9 +70,10 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   const wingPoolRef = useRef<HTMLAudioElement[]>([]);
   const wingPoolIdxRef = useRef<number>(0);
   const wingLastAtRef = useRef<number>(0);
-  // WebAudio for instant, non-blocking wing sound on mobile
+  // WebAudio for instant, non-blocking sounds on mobile
   const audioCtxRef = useRef<AudioContext | null>(null);
   const wingBufferRef = useRef<AudioBuffer | null>(null);
+  const pointBufferRef = useRef<AudioBuffer | null>(null);
 
   const reset = useCallback(() => {
     setScore(0);
@@ -245,11 +246,15 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
               scoreRef.current = ns;
               return ns;
             });
-            const point = audioRef.current["point"];
-            if (point) {
+            // Play point sound using WebAudio (instant, non-blocking)
+            const ctx = audioCtxRef.current;
+            const buffer = pointBufferRef.current;
+            if (ctx && buffer) {
               try {
-                point.currentTime = 0;
-                point.play();
+                const source = ctx.createBufferSource();
+                source.buffer = buffer;
+                source.connect(ctx.destination);
+                source.start(0);
               } catch {}
             }
           }
@@ -529,15 +534,26 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         const digitPaths = Array.from({ length: 10 }, (_, i) => `${base}/sprites/${i}.png`);
         const digitImgs = await Promise.all(digitPaths.map((p) => loadImage(p)));
         
-        // Load wing sound into WebAudio buffer for instant, non-blocking playback on mobile
+        // Load wing and point sounds into WebAudio buffers for instant, non-blocking playback on mobile
         let wingBuffer: AudioBuffer | null = null;
+        let pointBuffer: AudioBuffer | null = null;
         let audioCtx: AudioContext | null = null;
         try {
           audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
           const wingSrc = `${base}/audio/wing.wav`;
-          const response = await fetch(wingSrc);
-          const arrayBuffer = await response.arrayBuffer();
-          wingBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+          const pointSrc = `${base}/audio/point.wav`;
+          const [wingResponse, pointResponse] = await Promise.all([
+            fetch(wingSrc),
+            fetch(pointSrc)
+          ]);
+          const [wingArrayBuffer, pointArrayBuffer] = await Promise.all([
+            wingResponse.arrayBuffer(),
+            pointResponse.arrayBuffer()
+          ]);
+          [wingBuffer, pointBuffer] = await Promise.all([
+            audioCtx.decodeAudioData(wingArrayBuffer),
+            audioCtx.decodeAudioData(pointArrayBuffer)
+          ]);
         } catch {
           // WebAudio not available or decode failed; fall back to HTMLAudio
         }
@@ -575,6 +591,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           tintedPipesRef.current = tints;
           audioCtxRef.current = audioCtx;
           wingBufferRef.current = wingBuffer;
+          pointBufferRef.current = pointBuffer;
           assetsLoadedRef.current = true;
           setAssetsLoaded(true);
         }

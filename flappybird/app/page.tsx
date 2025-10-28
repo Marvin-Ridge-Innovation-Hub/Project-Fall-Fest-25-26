@@ -19,15 +19,16 @@ export default function Home() {
   }, []);
 
   return (
-    <div className="flex min-h-screen w-full bg-zinc-50 dark:bg-black font-sans">
+    <div className="flex min-h-screen w-full bg-gradient-to-br from-sky-50 via-blue-50 to-indigo-50 dark:from-zinc-950 dark:via-blue-950 dark:to-black font-sans">
       {/* Desktop/tablet layout */}
       {/* Fixed left sidebar on md+ that hugs the left and fills full height */}
-      <aside className="hidden md:flex fixed left-0 top-0 h-dvh w-80 flex-col gap-4 p-4 bg-white dark:bg-black border-r border-black/10 dark:border-white/15 z-10 overflow-y-auto">
-        <div className="w-full flex items-center justify-center pt-1">
+      <aside className="hidden md:flex fixed left-0 top-0 h-dvh w-80 flex-col gap-4 p-4 bg-white/80 dark:bg-black/80 backdrop-blur-xl border-r border-black/10 dark:border-white/15 z-10 overflow-y-auto shadow-2xl">
+        <div className="w-full flex items-center justify-center pt-1 animate-float">
           <img
+            style={{borderRadius: 10}}
             src="/csclogo.png"
             alt="CSC Logo"
-            className="w-full h-auto object-contain"
+            className="w-full h-auto object-contain drop-shadow-lg"
             decoding="async"
             loading="eager"
           />
@@ -37,13 +38,13 @@ export default function Home() {
         </div>
       </aside>
       {/* Main game area shifted to the right of the sidebar */}
-      <main className="hidden md:flex flex-1 md:ml-80">
-        <section className="flex-1 flex flex-col items-center p-6 md:p-10 w-full">
-          <h1 className="text-2xl md:text-3xl font-bold mb-4 text-center">
-            Fall Fest 25-26 - Flappy Bird
+      <main className="hidden md:flex flex-1 md:ml-80 items-center justify-center">
+        <section className="flex flex-col items-center justify-center w-full h-full p-6 gap-4">
+          <h1 className="text-3xl md:text-4xl font-bold text-center bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 dark:from-blue-400 dark:via-indigo-400 dark:to-purple-400 bg-clip-text text-transparent drop-shadow-sm flex-shrink-0">
+            🎮 Fall Fest 25-26 - Flappy Bird 🏆
           </h1>
-          <div className="flex items-start justify-center w-full">
-            <FlappyBird onScoreSubmitted={() => setRefreshKey((k) => k + 1)} />
+          <div className="flex items-center justify-center w-full" style={{ height: 'calc(100vh - 8rem)' }}>
+            <FlappyBird onScoreSubmitted={() => setRefreshKey((k) => k + 1)} fullScreen />
           </div>
         </section>
       </main>
@@ -60,16 +61,17 @@ export default function Home() {
             e.stopPropagation();
             setShowLB(true);
           }}
-          className="absolute top-3 right-3 z-40 rounded-full bg-black/70 text-white px-3 py-2 text-sm shadow-md"
+          className="absolute top-3 right-3 z-40 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white px-4 py-2.5 text-sm font-semibold shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105 active:scale-95"
         >
-          Leaderboard
+          🏆 Leaderboard
         </button>
         <Modal open={showLB} onClose={() => setShowLB(false)} title="Fall Fest 25-26 - Flappy Bird Leaderboard">
           <div className="w-full flex items-center justify-center mb-3">
             <img
+              style={{borderRadius: 10}}
               src="/csclogo.png"
               alt="CSC Logo"
-              className="w-full h-auto object-contain"
+              className="w-full h-auto object-contain drop-shadow-md"
               decoding="async"
               loading="eager"
             />

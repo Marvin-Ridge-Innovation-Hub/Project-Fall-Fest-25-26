@@ -5,19 +5,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 // Base design values (used to scale physics and sizes for different viewports)
 const BASE_WIDTH = 480;
 const BASE_HEIGHT = 640;
-const BASE_GROUND_H = 40; // ground thickness from bottom
 const BASE_PIPE_WIDTH = 70;
 const BASE_GAP = 160;
-const PIPE_INTERVAL_MS = 1500;
-const BASE_SPEED = 2.2; // px per frame baseline (horizontal)
+const PIPE_INTERVAL_MS = 1300; // Increased for better spacing between pipes
+const BASE_SPEED = 3.5; // Increased for better game feel
 const BASE_GRAVITY = 0.45; // velocity per frame (vertical)
 const BASE_FLAP = -8.5; // jump impulse (vertical)
 // Difficulty scaling
 const MAX_LEVEL = 8; // stop scaling after score >= 80
-const SPEED_PER_LEVEL = 0.08; // +8% horizontal speed per level
-const GRAVITY_PER_LEVEL = 0.04; // +4% gravity per level
-const GAP_REDUCTION_PER_LEVEL = 0.06; // -6% pipe gap per level
-const INTERVAL_REDUCTION_MS_PER_LEVEL = 70; // -70ms spawn interval per level
+const SPEED_PER_LEVEL = 0.06; // Reduced from 0.08 for more gradual difficulty increase
+const GRAVITY_PER_LEVEL = 0.03; // Reduced from 0.04
+const GAP_REDUCTION_PER_LEVEL = 0.05; // Reduced from 0.06
+const INTERVAL_REDUCTION_MS_PER_LEVEL = 90; // Reduced from 70ms spawn interval per level
 
 type Pipe = {
   x: number;
@@ -38,6 +37,8 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   // Use a ref for the RAF loop so it sees live asset state
   const assetsLoadedRef = useRef<boolean>(false);
   const imagesRef = useRef<{ [k: string]: HTMLImageElement }>({});
+  // City backgrounds: array of cities, each containing array of layers
+  const cityBackgroundsRef = useRef<HTMLImageElement[][]>([]);
   const audioRef = useRef<{ [k: string]: HTMLAudioElement }>({});
   const birdFrameRef = useRef<number>(0);
   const birdFrameTimeRef = useRef<number>(0);
@@ -64,7 +65,11 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   const pipes = useRef<Pipe[]>([]);
   const lastSpawnAt = useRef<number>(0);
   const pipeSpawnCount = useRef<number>(0);
+  // Background management: 0 = flappy bird default, 1-8 = cities
+  const currentBgIndex = useRef<number>(0);
   // tint is tied to difficulty level
+  // Parallax scrolling offset for background
+  const parallaxOffsetRef = useRef<number>(0);
 
   // Audio pooling and throttling to reduce mobile stutter on tap
   const wingPoolRef = useRef<HTMLAudioElement[]>([]);
@@ -89,6 +94,8 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
     pipes.current = [];
     lastSpawnAt.current = 0;
   pipeSpawnCount.current = 0;
+    currentBgIndex.current = 0; // Reset to default flappy bird background
+    parallaxOffsetRef.current = 0;
     // reset submission fields
     setStudentId("");
     setFirstName("");
@@ -161,6 +168,9 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    // Avoid tiny seams by disabling smoothing (pixel art) and keeping integer draws
+    ctx.imageSmoothingEnabled = false;
+
     let lastTime = performance.now();
 
     const spawnPipe = () => {
@@ -168,14 +178,14 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
       const H = heightRef.current;
       const wScale = W / BASE_WIDTH;
       const hScale = H / BASE_HEIGHT;
-      const GROUND_Y = H - BASE_GROUND_H * hScale;
+      // Use hScale for pipe width so pipes don't get huge on wide screens
       // difficulty-adjusted gap
       const level = Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10));
       const gapMul = Math.max(1 - GAP_REDUCTION_PER_LEVEL * level, 0.65);
       const GAP = Math.max(60 * hScale, BASE_GAP * hScale * gapMul);
-      const PIPE_WIDTH = BASE_PIPE_WIDTH * wScale;
+      const PIPE_WIDTH = BASE_PIPE_WIDTH * hScale; // Changed from wScale to hScale
       const margin = 80 * hScale;
-      const range = Math.max(1, GROUND_Y - GAP - margin * 2);
+      const range = Math.max(1, H - GAP - margin * 2);
       const gapY = Math.floor(Math.random() * range) + margin;
   pipeSpawnCount.current += 1;
   const hasTrigger = pipeSpawnCount.current % 10 === 0;
@@ -219,11 +229,14 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         // move pipes
   const W = widthRef.current;
   const wScale = W / BASE_WIDTH;
+  const hScalePipe = heightRef.current / BASE_HEIGHT;
   const speedMul = Math.min(1 + SPEED_PER_LEVEL * Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10)), 1.6);
   const dx = BASE_SPEED * speedMul * wScale * (dt / 16.67);
-        pipes.current.forEach((p) => (p.x -= dx * 3));
+        pipes.current.forEach((p) => (p.x -= dx)); // Removed * 3 multiplier
+        // Update parallax offset (background scrolls at 30% of foreground speed)
+        parallaxOffsetRef.current += dx * 0.3;
         // remove offscreen
-        const PIPE_WIDTH = BASE_PIPE_WIDTH * wScale;
+        const PIPE_WIDTH = BASE_PIPE_WIDTH * hScalePipe; // Changed from wScale to hScale
         pipes.current = pipes.current.filter((p) => p.x + PIPE_WIDTH > -10 * wScale);
 
         // scoring and collisions
@@ -235,8 +248,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           const level = Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10));
           const gapMul = Math.max(1 - GAP_REDUCTION_PER_LEVEL * level, 0.65);
           const GAP = Math.max(60 * hS, BASE_GAP * hS * gapMul);
-          const PIPE_WIDTH = BASE_PIPE_WIDTH * wS;
-          const GROUND_Y = H2 - BASE_GROUND_H * hS;
+          const PIPE_WIDTH = BASE_PIPE_WIDTH * hS; // Changed from wS to hS
           const birdX = W2 * 0.25; // bird x
           const r = 12 * Math.min(wS, hS); // bird radius
           if (!p.passed && p.x + PIPE_WIDTH < birdX) {
@@ -244,6 +256,11 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
             setScore((s) => {
               const ns = s + 1;
               scoreRef.current = ns;
+              // Update background every 10 points: 0-9=default, 10-19=city1, 20-29=city2, etc.
+              const newBgIndex = Math.floor(ns / 10);
+              if (newBgIndex !== currentBgIndex.current && newBgIndex <= 8) {
+                currentBgIndex.current = newBgIndex;
+              }
               return ns;
             });
             // Play point sound using WebAudio (instant, non-blocking)
@@ -280,12 +297,11 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
 
         });
 
-        // ground/ceiling
+        // ceiling collision (bird hits top)
         const H3 = heightRef.current;
         const hS2 = H3 / BASE_HEIGHT;
-        const GROUND_Y = H3 - BASE_GROUND_H * hS2;
         const r2 = 12 * Math.min(widthRef.current / BASE_WIDTH, hS2);
-        if (birdY.current + r2 >= GROUND_Y || birdY.current - r2 <= 0) {
+        if (birdY.current - r2 <= 0 || birdY.current + r2 >= H3) {
           setGameOver(true);
           gameOverRef.current = true;
         }
@@ -296,36 +312,58 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
       const H = heightRef.current;
       const wScale = W / BASE_WIDTH;
       const hScale = H / BASE_HEIGHT;
-      const PIPE_WIDTH = BASE_PIPE_WIDTH * wScale;
+      const PIPE_WIDTH = BASE_PIPE_WIDTH * hScale; // Changed from wScale to hScale
       // difficulty-adjusted gap for drawing to match collisions
       const levelDraw = Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10));
       const gapMulDraw = Math.max(1 - GAP_REDUCTION_PER_LEVEL * levelDraw, 0.65);
       const GAP = Math.max(60 * hScale, BASE_GAP * hScale * gapMulDraw);
-      const GROUND_Y = H - BASE_GROUND_H * hScale;
       const r = 12 * Math.min(wScale, hScale);
 
       ctx.clearRect(0, 0, W, H);
-      // background image (draw if loaded, otherwise sky color)
-      const bg = imagesRef.current["background-day"];
-      if (bg && assetsLoadedRef.current) {
-        ctx.drawImage(bg, 0, 0, W, H);
+      // background image with parallax scrolling (draw if loaded, otherwise sky color)
+      if (assetsLoadedRef.current) {
+        if (currentBgIndex.current === 0) {
+          // Default flappy bird background
+          const bg = imagesRef.current["background-day"];
+          if (bg) {
+            // Scale background to cover height, tile horizontally with parallax offset
+            const bgScale = H / bg.height;
+            const bgW = bg.width * bgScale;
+            // Snap and slightly overlap tiles to remove thin slits on some DPRs
+            const parallaxX = Math.floor((-parallaxOffsetRef.current % bgW));
+            // Draw multiple tiles to cover the width with parallax
+            for (let x = parallaxX - bgW; x < W + bgW; x += bgW) {
+              const xi = Math.floor(x) - 1; // bleed by 1px on the left
+              const ww = Math.ceil(bgW) + 2; // and 1px on the right
+              ctx.drawImage(bg, xi, 0, ww, Math.ceil(H));
+            }
+          }
+        } else {
+          // City backgrounds with multi-layer parallax
+          const cityLayers = cityBackgroundsRef.current[currentBgIndex.current - 1];
+          if (cityLayers && cityLayers.length > 0) {
+            // Render each layer with increasing parallax speed (layer 1 = slowest, higher layers = faster)
+            cityLayers.forEach((layerImg, layerIndex) => {
+              // Parallax speed increases with layer index: 0.1x, 0.2x, 0.3x, etc.
+              const parallaxSpeed = (layerIndex + 1) * 0.1;
+              const layerParallax = parallaxOffsetRef.current * parallaxSpeed;
+              
+              const bgScale = H / layerImg.height;
+              const bgW = layerImg.width * bgScale;
+              const parallaxX = Math.floor((-layerParallax % bgW));
+              
+              for (let x = parallaxX - bgW; x < W + bgW; x += bgW) {
+                const xi = Math.floor(x) - 1;
+                const ww = Math.ceil(bgW) + 2;
+                ctx.drawImage(layerImg, xi, 0, ww, Math.ceil(H));
+              }
+            });
+          }
+        }
       } else {
         // fallback sky while assets load
         ctx.fillStyle = "#87CEEB";
         ctx.fillRect(0, 0, W, H);
-      }
-      // ground/base image (if loaded); otherwise a simple ground strip
-      const baseImg = imagesRef.current["base"];
-      if (baseImg && assetsLoadedRef.current) {
-        const baseH = Math.max(1, H - GROUND_Y);
-        const scale = baseH / baseImg.height;
-        const tileW = baseImg.width * scale;
-        for (let x = 0; x < W + tileW; x += tileW) {
-          ctx.drawImage(baseImg, x, GROUND_Y, tileW, baseH);
-        }
-      } else {
-        ctx.fillStyle = "#d0b07e";
-        ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
       }
 
       // pipes (use green pipe sprite; flip for top). Skip drawing until loaded.
@@ -335,39 +373,57 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
       const pipeImg = imagesRef.current["pipe-green"];
       if ((tintedPipe || pipeImg) && assetsLoadedRef.current) {
         ctx.save();
+        // Re-enable smoothing for pipes to avoid scaling artifacts
+        ctx.imageSmoothingEnabled = true;
         const sprite = tintedPipe || pipeImg;
+        
         pipes.current.forEach((p) => {
-          // top pipe (flipped)
+          // Snap positions/sizes to integers - consistent rounding is key
+          const px = Math.round(p.x);
+          const pw = Math.max(1, Math.round(PIPE_WIDTH));
+          const gapY = Math.round(p.gapY);
+          const gapH = Math.round(GAP);
+          const bottomY = gapY + gapH;
+          const bottomH = Math.max(1, H - bottomY); // Pipes extend to bottom of screen
+
+          // The pipe sprite maintains its aspect ratio when scaled to width
+          const spriteAspect = sprite.width / sprite.height;
+          const scaledSpriteH = pw / spriteAspect;
+
+          // Top pipe: Draw sprite flipped so the opening/notch appears at the gap
+          // Fill from top (0) to gapY with the pipe, showing the notch at the bottom (gap edge)
           ctx.save();
-          ctx.translate(p.x + PIPE_WIDTH / 2, p.gapY);
-          ctx.scale(1, -1);
-          ctx.drawImage(
-            sprite,
-            -PIPE_WIDTH / 2,
-            0,
-            PIPE_WIDTH,
-            Math.max(1, p.gapY)
-          );
+          ctx.translate(px + pw / 2, gapY);
+          ctx.scale(1, -1); // flip vertically
+          // Tile the pipe upward from the gap
+          for (let y = 0; y < gapY + scaledSpriteH; y += scaledSpriteH) {
+            ctx.drawImage(sprite, -pw / 2, y, pw, scaledSpriteH);
+          }
           ctx.restore();
-          // bottom pipe
-          ctx.drawImage(
-            sprite,
-            p.x,
-            p.gapY + GAP,
-            PIPE_WIDTH,
-            Math.max(1, GROUND_Y - (p.gapY + GAP))
-          );
+
+          // Bottom pipe: Draw normally so the opening/notch appears at the gap
+          // Tile the pipe downward from bottomY to canvas bottom
+          for (let y = bottomY; y < H + scaledSpriteH; y += scaledSpriteH) {
+            ctx.drawImage(sprite, px, y, pw, scaledSpriteH);
+          }
 
           // draw translucent trigger rectangle spanning the gap (every 10th pipe only)
           if (p.hasTrigger) {
             ctx.save();
             ctx.filter = "none"; // do not tint the rectangle
-            const levelHue = Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10)) * 45;
-            ctx.fillStyle = `hsla(${levelHue}, 90%, 50%, 0.18)`;
-            ctx.fillRect(p.x, p.gapY, PIPE_WIDTH, GAP);
+            const levelIdx = Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10));
+            const colorHues = [120, 55, 30, 0, 280, 230, 195, 330, 0]; // match pipe colors
+            const levelHue = colorHues[levelIdx] || 0;
+            const levelSat = levelIdx === 8 ? 0 : 90; // desaturate for black
+            const levelLight = levelIdx === 8 ? 20 : 60; // darker for black
+            ctx.fillStyle = `hsla(${levelHue}, ${levelSat}%, ${levelLight}%, 0.2)`;
+            // Use the same snapped values as the pipes
+            ctx.fillRect(px, gapY, pw, gapH);
             ctx.restore();
           }
         });
+        // Restore no-smoothing for pixel-perfect backgrounds
+        ctx.imageSmoothingEnabled = false;
         ctx.restore();
       }
 
@@ -398,8 +454,8 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         const dH = 36 * Math.min(wScale, hScale);
         const dW = 24 * Math.min(wScale, hScale);
         const totalW = dW * sStr.length;
-        let x = (W - totalW) / 2;
-        const y = 20 * Math.min(wScale, hScale);
+        let x = Math.round((W - totalW) / 2);
+        const y = Math.round(20 * Math.min(wScale, hScale));
         for (const ch of sStr) {
           const idx = ch.charCodeAt(0) - 48;
           if (idx >= 0 && idx <= 9) {
@@ -449,8 +505,17 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
       let newW = BASE_WIDTH;
       let newH = BASE_HEIGHT;
       if (fullScreen && container) {
-        newW = Math.max(1, container.clientWidth);
-        newH = Math.max(1, container.clientHeight);
+        const containerW = container.clientWidth;
+        const containerH = container.clientHeight;
+        // Maintain aspect ratio: fit height, then scale width proportionally
+        const aspectRatio = BASE_WIDTH / BASE_HEIGHT;
+        newH = containerH;
+        newW = Math.round(newH * aspectRatio);
+        // If width exceeds container, fit to width instead
+        if (newW > containerW) {
+          newW = containerW;
+          newH = Math.round(newW / aspectRatio);
+        }
       }
       // adjust positions proportionally to avoid sudden jumps
       const prevW = widthRef.current;
@@ -504,7 +569,6 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
             }
         const entries: [string, string][] = [
           ["background-day", `${base}/sprites/background-day.png`],
-          ["base", `${base}/sprites/base.png`],
           ["pipe-green", `${base}/sprites/pipe-green.png`],
           ["yellowbird-upflap", `${base}/sprites/yellowbird-upflap.png`],
           ["yellowbird-midflap", `${base}/sprites/yellowbird-midflap.png`],
@@ -515,8 +579,28 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         const images = await Promise.all(entries.map(([, src]) => loadImage(src)));
         const map: { [k: string]: HTMLImageElement } = {};
         entries.forEach(([key], i) => (map[key] = images[i]));
+        
+        // Load city backgrounds (8 cities, each with multiple layers)
+        // Layer order: 1 (farthest/sky) to higher numbers (closer/foreground)
+        const cityBgs: HTMLImageElement[][] = [];
+        for (let cityNum = 1; cityNum <= 8; cityNum++) {
+          const cityBase = `/free-city-backgrounds-pixel-art/city ${cityNum}`;
+          // Try loading layers 1-10 (not all cities have all layers)
+          const layerPromises = [1, 2, 3, 4, 5, 6, 7, 10].map(async (layerNum) => {
+            try {
+              return await loadImage(`${cityBase}/${layerNum}.png`);
+            } catch {
+              return null; // Layer doesn't exist for this city
+            }
+          });
+          const layers = await Promise.all(layerPromises);
+          // Filter out null values (non-existent layers)
+          cityBgs.push(layers.filter((l): l is HTMLImageElement => l !== null));
+        }
+        
         if (!cancelled) {
           imagesRef.current = map;
+          cityBackgroundsRef.current = cityBgs;
         }
 
         // audio
@@ -563,20 +647,42 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         const tints: HTMLCanvasElement[] = [];
               wingPoolRef.current = wingPool;
         if (basePipe) {
+          // Vibrant color progression: green → yellow → orange → red → purple → navy blue → sky blue → pink → black
+          const colorHues = [120, 55, 30, 0, 280, 230, 195, 330, 0]; // green, yellow, orange, red, purple, navy, sky blue, pink, black
+          const saturations = [85, 95, 95, 95, 90, 95, 85, 90, 0]; // high saturation for vibrant colors, 0 for black
+          const lightnesses = [50, 55, 55, 50, 50, 45, 60, 60, 15]; // adjusted for each color, very low for black
+          
           for (let lvl = 0; lvl <= MAX_LEVEL; lvl++) {
-            const deg = lvl * 45; // 0..360
+            const hue = colorHues[lvl] || 0;
+            const sat = saturations[lvl] || 0;
+            const light = lightnesses[lvl] || 15;
             const c = document.createElement("canvas");
             c.width = basePipe.width;
             c.height = basePipe.height;
             const cctx = c.getContext("2d");
             if (cctx) {
-              // draw original
+              // Step 1: Draw original pipe
               cctx.drawImage(basePipe, 0, 0);
-              // overlay a color with multiply to tint while preserving shading
+              
+              // Step 2: Convert to grayscale using desaturation
+              const imageData = cctx.getImageData(0, 0, c.width, c.height);
+              const data = imageData.data;
+              for (let i = 0; i < data.length; i += 4) {
+                // Calculate grayscale value (weighted average for better perception)
+                const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+                data[i] = gray;     // R
+                data[i + 1] = gray; // G
+                data[i + 2] = gray; // B
+                // Keep alpha (data[i + 3]) unchanged
+              }
+              cctx.putImageData(imageData, 0, 0);
+              
+              // Step 3: Apply vibrant color tint with multiply blend
               cctx.globalCompositeOperation = "multiply";
-              cctx.fillStyle = `hsl(${deg}, 80%, 60%)`;
+              cctx.fillStyle = `hsl(${hue}, ${sat}%, ${light}%)`;
               cctx.fillRect(0, 0, c.width, c.height);
-              // keep alpha of original sprite
+              
+              // Step 4: Restore alpha channel
               cctx.globalCompositeOperation = "destination-in";
               cctx.drawImage(basePipe, 0, 0);
               cctx.globalCompositeOperation = "source-over";
@@ -646,18 +752,23 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   }, [firstName, lastInitial, onScoreSubmitted, reset, requiresProfile, score, studentId]);
 
   return (
-    <div className={`w-full h-full flex flex-col ${fullScreen ? "items-stretch" : "items-center"}`}>
+    <div className={`w-full h-full flex flex-col ${fullScreen ? "items-center justify-center" : "items-center"}`}>
       <div
         ref={containerRef}
-        className={fullScreen ? "relative w-full h-dvh overflow-hidden" : "relative"}
+        className={fullScreen ? "relative w-full h-full flex items-center justify-center" : "relative"}
         style={fullScreen ? undefined : { width: BASE_WIDTH, height: BASE_HEIGHT }}
       >
         <canvas
           ref={canvasRef}
           width={widthRef.current}
           height={heightRef.current}
-          style={{ display: "block", width: fullScreen ? "100%" : BASE_WIDTH, height: fullScreen ? "100%" : BASE_HEIGHT, touchAction: "none" }}
-          className="rounded-lg shadow border border-black/10 dark:border-white/15 bg-white cursor-pointer"
+          style={{ 
+            display: "block", 
+            width: fullScreen ? `${widthRef.current}px` : BASE_WIDTH, 
+            height: fullScreen ? `${heightRef.current}px` : BASE_HEIGHT, 
+            touchAction: "none" 
+          }}
+          className="rounded-2xl shadow-2xl border-4 border-white/20 dark:border-white/10 bg-white cursor-pointer"
         />
         {/* Start message drawn into canvas; no HTML overlay needed */}
         {gameOver && (
@@ -670,13 +781,15 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
                 decoding="async"
                 loading="eager"
               />
-              <div className="w-[85%] max-w-sm rounded-lg bg-white/95 dark:bg-black/90 p-4 border border-black/10 dark:border-white/15">
-              <div className="text-lg font-semibold mb-1">Score: {score}</div>
+              <div className="w-[85%] max-w-sm rounded-xl bg-white/95 dark:bg-zinc-900/95 backdrop-blur-sm p-5 border-2 border-blue-200 dark:border-blue-800 shadow-2xl">
+              <div className="text-xl font-bold mb-2 bg-gradient-to-r from-blue-600 to-indigo-600 dark:from-blue-400 dark:to-indigo-400 bg-clip-text text-transparent">
+                Score: {score} 🎯
+              </div>
               <div className="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
                 Enter your Student ID (or teacher email prefix) to submit your score.
               </div>
               <input
-                className="w-full mb-2 rounded border border-black/20 dark:border-white/20 bg-transparent px-3 py-2 outline-none focus:ring-2 focus:ring-zinc-400"
+                className="w-full mb-2 rounded-lg border-2 border-blue-200 dark:border-blue-800 bg-transparent px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-400 transition-all duration-200"
                 value={studentId}
                 onChange={(e) => setStudentId(e.target.value)}
                 placeholder="Student ID or email prefix"
@@ -685,36 +798,36 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
               {requiresProfile && (
                 <div className="grid grid-cols-1 gap-2 mb-2">
                   <input
-                    className="w-full rounded border border-black/20 dark:border-white/20 bg-transparent px-3 py-2 outline-none focus:ring-2 focus:ring-zinc-400"
+                    className="w-full rounded-lg border-2 border-blue-200 dark:border-blue-800 bg-transparent px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-400 transition-all duration-200"
                     value={firstName}
                     onChange={(e) => setFirstName(e.target.value)}
                     placeholder="First name"
                     maxLength={40}
                   />
                   <input
-                    className="w-full rounded border border-black/20 dark:border-white/20 bg-transparent px-3 py-2 outline-none focus:ring-2 focus:ring-zinc-400"
+                    className="w-full rounded-lg border-2 border-blue-200 dark:border-blue-800 bg-transparent px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-400 transition-all duration-200"
                     value={lastInitial}
                     onChange={(e) => setLastInitial(e.target.value)}
                     placeholder="Last initial"
                     maxLength={1}
                   />
-                  <div className="text-xs text-zinc-500">We only store your first name and last initial.</div>
+                  <div className="text-xs text-zinc-500">✨ We only store your first name and last initial.</div>
                 </div>
               )}
               <div className="flex gap-2 justify-end">
                 <button
-                  className="px-3 py-2 rounded border border-black/20 dark:border-white/20 text-sm"
+                  className="px-4 py-2.5 rounded-lg border-2 border-zinc-300 dark:border-zinc-600 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-all duration-200"
                   onClick={reset}
                   disabled={submitting}
                 >
                   Skip
                 </button>
                 <button
-                  className="px-3 py-2 rounded bg-black text-white dark:bg-white dark:text-black text-sm disabled:opacity-50"
+                  className="px-4 py-2.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-sm font-semibold disabled:opacity-50 hover:shadow-lg transition-all duration-200 hover:scale-105 active:scale-95"
                   onClick={submitScore}
                   disabled={submitting}
                 >
-                  {submitting ? "Submitting…" : requiresProfile ? "Submit" : "Continue"}
+                  {submitting ? "Submitting…" : requiresProfile ? "Submit 🚀" : "Continue →"}
                 </button>
               </div>
               </div>

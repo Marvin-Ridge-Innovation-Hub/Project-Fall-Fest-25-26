@@ -98,8 +98,10 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   const backgroundMusicRef = useRef<HTMLAudioElement | null>(null);
   const currentMusicLevelRef = useRef<number>(-1); // Track which music is playing
   
-  // Portal sound refs
-  const portalIdleSoundRef = useRef<HTMLAudioElement | null>(null);
+  // Portal sound refs (using WebAudio for better iOS compatibility)
+  const portalIdleBufferRef = useRef<AudioBuffer | null>(null);
+  const portalIdleSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const portalIdleGainRef = useRef<GainNode | null>(null);
   const portalWarpSoundRef = useRef<HTMLAudioElement | null>(null);
   const activePortalRef = useRef<Pipe | null>(null); // Track which portal we're near
 
@@ -134,10 +136,14 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
     currentMusicLevelRef.current = -1;
     
     // Stop portal sounds
-    if (portalIdleSoundRef.current) {
-      portalIdleSoundRef.current.pause();
-      portalIdleSoundRef.current.currentTime = 0;
-      portalIdleSoundRef.current.volume = 0;
+    if (portalIdleSourceRef.current) {
+      try {
+        portalIdleSourceRef.current.stop();
+      } catch {}
+      portalIdleSourceRef.current = null;
+    }
+    if (portalIdleGainRef.current) {
+      portalIdleGainRef.current.gain.value = 0;
     }
     activePortalRef.current = null;
     
@@ -346,22 +352,46 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
             }
           });
           
-          const idleSound = portalIdleSoundRef.current;
+          const ctx = audioCtxRef.current;
+          const idleBuffer = portalIdleBufferRef.current;
           const warpSound = portalWarpSoundRef.current;
           
-          if (nearestPortal && idleSound && warpSound) {
+          if (nearestPortal && ctx && idleBuffer && warpSound) {
             const fadeInDistance = PIPE_WIDTH * 1.5; // Start fading in 1.5 pipes away
             const warpDistance = PIPE_WIDTH * 0.3; // Trigger warp when very close
             
             // Calculate volume based on distance (0 to 1)
             const fadeVolume = Math.max(0, Math.min(1, 1 - (nearestDistance / fadeInDistance)));
+            const targetVolume = fadeVolume * 0.4; // Max 40% volume for idle
             
-            // Update idle sound volume
-            idleSound.volume = fadeVolume * 0.4; // Max 40% volume for idle
+            // Initialize WebAudio nodes if not already playing
+            if (!portalIdleSourceRef.current && targetVolume > 0) {
+              // Unlock audio context on iOS
+              if (ctx.state === 'suspended') {
+                ctx.resume().catch(() => {});
+              }
+              
+              // Create gain node for volume control
+              const gainNode = ctx.createGain();
+              gainNode.gain.value = 0;
+              gainNode.connect(ctx.destination);
+              portalIdleGainRef.current = gainNode;
+              
+              // Create looping buffer source
+              const source = ctx.createBufferSource();
+              source.buffer = idleBuffer;
+              source.loop = true;
+              source.connect(gainNode);
+              source.start(0);
+              portalIdleSourceRef.current = source;
+            }
             
-            // Start playing idle sound if we're in range
-            if (fadeVolume > 0 && idleSound.paused) {
-              idleSound.play().catch(() => {});
+            // Update volume using gain node (smooth fade)
+            if (portalIdleGainRef.current) {
+              const currentGain = portalIdleGainRef.current.gain.value;
+              const gainDelta = targetVolume - currentGain;
+              // Smooth exponential fade
+              portalIdleGainRef.current.gain.setTargetAtTime(targetVolume, ctx.currentTime, 0.1);
             }
             
             // Trigger warp sound when very close (only once per portal)
@@ -371,32 +401,22 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
               warpSound.volume = 0.5;
               warpSound.play().catch(() => {});
             }
-            
-            // Fade out when we've passed the portal
-            if (nearestDistance <= 0 || fadeVolume <= 0) {
-              if (!idleSound.paused) {
-                // Fade out over a short time
-                const fadeOutSpeed = 0.05;
-                if (idleSound.volume > fadeOutSpeed) {
-                  idleSound.volume -= fadeOutSpeed;
-                } else {
-                  idleSound.pause();
-                  idleSound.currentTime = 0;
-                  idleSound.volume = 0;
-                  activePortalRef.current = null;
-                }
-              }
-            }
           } else {
-            // No portal nearby, fade out idle sound
-            if (idleSound && !idleSound.paused) {
-              const fadeOutSpeed = 0.05;
-              if (idleSound.volume > fadeOutSpeed) {
-                idleSound.volume -= fadeOutSpeed;
+            // No portal nearby, fade out and stop idle sound
+            if (portalIdleGainRef.current && portalIdleSourceRef.current) {
+              const gainNode = portalIdleGainRef.current;
+              const currentGain = gainNode.gain.value;
+              
+              if (currentGain > 0.01) {
+                // Smooth fade out
+                gainNode.gain.setTargetAtTime(0, ctx!.currentTime, 0.15);
               } else {
-                idleSound.pause();
-                idleSound.currentTime = 0;
-                idleSound.volume = 0;
+                // Stop completely when volume is very low
+                try {
+                  portalIdleSourceRef.current.stop();
+                } catch {}
+                portalIdleSourceRef.current = null;
+                portalIdleGainRef.current = null;
                 activePortalRef.current = null;
               }
             }
@@ -872,9 +892,11 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         backgroundMusicRef.current = null;
       }
       // Stop portal sounds when component unmounts
-      if (portalIdleSoundRef.current) {
-        portalIdleSoundRef.current.pause();
-        portalIdleSoundRef.current = null;
+      if (portalIdleSourceRef.current) {
+        try {
+          portalIdleSourceRef.current.stop();
+        } catch {}
+        portalIdleSourceRef.current = null;
       }
       if (portalWarpSoundRef.current) {
         portalWarpSoundRef.current = null;
@@ -1084,12 +1106,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           a.volume = 0.6;
         });
         
-        // Load portal sounds
-        const portalIdleSound = new Audio('/portalSounds/idle.mp3');
-        portalIdleSound.loop = true;
-        portalIdleSound.volume = 0;
-        portalIdleSound.preload = "auto";
-        
+        // Load portal warp sound (one-shot, doesn't need WebAudio)
         const portalWarpSound = new Audio('/portalSounds/warp.mp3');
         portalWarpSound.volume = 0.5;
         portalWarpSound.preload = "auto";
@@ -1098,25 +1115,30 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         const digitPaths = Array.from({ length: 10 }, (_, i) => `${base}/sprites/${i}.png`);
         const digitImgs = await Promise.all(digitPaths.map((p) => loadImage(p)));
         
-        // Load wing and point sounds into WebAudio buffers for instant, non-blocking playback on mobile
+        // Load wing, point, and portal idle sounds into WebAudio buffers for instant, non-blocking playback on mobile
         let wingBuffer: AudioBuffer | null = null;
         let pointBuffer: AudioBuffer | null = null;
+        let portalIdleBuffer: AudioBuffer | null = null;
         let audioCtx: AudioContext | null = null;
         try {
           audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
           const wingSrc = `${base}/audio/wing.wav`;
           const pointSrc = `${base}/audio/point.wav`;
-          const [wingResponse, pointResponse] = await Promise.all([
+          const portalIdleSrc = '/portalSounds/idle.mp3';
+          const [wingResponse, pointResponse, portalIdleResponse] = await Promise.all([
             fetch(wingSrc),
-            fetch(pointSrc)
+            fetch(pointSrc),
+            fetch(portalIdleSrc)
           ]);
-          const [wingArrayBuffer, pointArrayBuffer] = await Promise.all([
+          const [wingArrayBuffer, pointArrayBuffer, portalIdleArrayBuffer] = await Promise.all([
             wingResponse.arrayBuffer(),
-            pointResponse.arrayBuffer()
+            pointResponse.arrayBuffer(),
+            portalIdleResponse.arrayBuffer()
           ]);
-          [wingBuffer, pointBuffer] = await Promise.all([
+          [wingBuffer, pointBuffer, portalIdleBuffer] = await Promise.all([
             audioCtx.decodeAudioData(wingArrayBuffer),
-            audioCtx.decodeAudioData(pointArrayBuffer)
+            audioCtx.decodeAudioData(pointArrayBuffer),
+            audioCtx.decodeAudioData(portalIdleArrayBuffer)
           ]);
         } catch {
           // WebAudio not available or decode failed; fall back to HTMLAudio
@@ -1178,7 +1200,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           audioCtxRef.current = audioCtx;
           wingBufferRef.current = wingBuffer;
           pointBufferRef.current = pointBuffer;
-          portalIdleSoundRef.current = portalIdleSound;
+          portalIdleBufferRef.current = portalIdleBuffer;
           portalWarpSoundRef.current = portalWarpSound;
           assetsLoadedRef.current = true;
           setAssetsLoaded(true);

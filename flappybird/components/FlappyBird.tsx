@@ -185,6 +185,30 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
       runningRef.current = true;
       // Initialize bird X position when game starts
       birdX.current = widthRef.current * 0.25;
+      
+      // Start background music if we're starting at a level with music (iOS needs user gesture)
+      const startLevel = Math.floor(scoreRef.current / 10);
+      if (startLevel > 0 && startLevel <= 8 && !backgroundMusicRef.current) {
+        const musicFiles = [
+          '/music/emotional-orchestra-short-145091.mp3',
+          '/music/epic-love-inspirational-romantic-cinematic-30-seconds-406069.mp3',
+          '/music/epic-middle-eastern-30-seconds-percussion-389431.mp3',
+          '/music/falling-grace-348198.mp3',
+          '/music/hopeful-acoustic-travel-30-seconds-368800.mp3',
+          '/music/instrumental-music-for-video-blog-stories-cyborg-in-me-27-seconds-188532.mp3',
+          '/music/pizzicato-play-30-seconds-children-music-394553.mp3',
+          '/music/western-journey-30-seconds-183089.mp3'
+        ];
+        const musicFile = musicFiles[startLevel - 1];
+        if (musicFile) {
+          const audio = new Audio(musicFile);
+          audio.volume = 0.6;
+          audio.loop = true;
+          audio.play().catch(() => {});
+          backgroundMusicRef.current = audio;
+          currentMusicLevelRef.current = startLevel;
+        }
+      }
     }
     if (gameOverRef.current) return;
     const hScale = heightRef.current / BASE_HEIGHT;
@@ -485,15 +509,24 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
                   // Start new music for this level
                   const musicFile = musicFiles[musicLevel - 1];
                   if (musicFile) {
-                    const audio = new Audio(musicFile);
-                    audio.volume = 0.6; // Quieter than sound effects
-                    audio.loop = true;
-                    audio.play().catch(() => {
-                      // Autoplay might be blocked, will play on next user interaction
-                    });
-                    backgroundMusicRef.current = audio;
-                    currentMusicLevelRef.current = musicLevel;
-                    console.log('🎵 Playing music level', musicLevel, ':', musicFile);
+                    try {
+                      const audio = new Audio(musicFile);
+                      audio.volume = 0.6; // Quieter than sound effects
+                      audio.loop = true;
+                      // Force play with promise handling for iOS
+                      const playPromise = audio.play();
+                      if (playPromise !== undefined) {
+                        playPromise.catch(() => {
+                          // Autoplay blocked, will retry on next user interaction
+                          console.log('Music autoplay blocked, will play on next interaction');
+                        });
+                      }
+                      backgroundMusicRef.current = audio;
+                      currentMusicLevelRef.current = musicLevel;
+                      console.log('🎵 Playing music level', musicLevel, ':', musicFile);
+                    } catch (err) {
+                      console.error('Failed to play music:', err);
+                    }
                   }
                 }
                 

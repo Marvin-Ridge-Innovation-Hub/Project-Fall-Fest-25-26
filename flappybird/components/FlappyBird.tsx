@@ -46,6 +46,10 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   const [running, setRunning] = useState<boolean>(false);
   const [gameOver, setGameOver] = useState<boolean>(false);
   const [score, setScore] = useState<number>(0);
+  // mirror critical states into refs so the RAF loop doesn't depend on React rerenders
+  const runningRef = useRef<boolean>(false);
+  const gameOverRef = useRef<boolean>(false);
+  const scoreRef = useRef<number>(0);
   const [studentId, setStudentId] = useState<string>("");
   const [firstName, setFirstName] = useState<string>("");
   const [lastInitial, setLastInitial] = useState<string>("");
@@ -60,10 +64,19 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   const pipeSpawnCount = useRef<number>(0);
   // tint is tied to difficulty level
 
+  // Audio pooling and throttling to reduce mobile stutter on tap
+  const wingPoolRef = useRef<HTMLAudioElement[]>([]);
+  const wingPoolIdxRef = useRef<number>(0);
+  const wingLastAtRef = useRef<number>(0);
+
   const reset = useCallback(() => {
     setScore(0);
     setGameOver(false);
     setRunning(false);
+    // keep refs in sync
+    scoreRef.current = 0;
+    gameOverRef.current = false;
+    runningRef.current = false;
     const H = heightRef.current;
     birdY.current = H / 2;
     birdV.current = 0;
@@ -78,21 +91,35 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   }, []);
 
   const flap = useCallback(() => {
-    if (!running && !gameOver) {
+    // start game on first tap
+    if (!runningRef.current && !gameOverRef.current) {
       setRunning(true);
+      runningRef.current = true;
     }
-    if (gameOver) return;
-  const hScale = heightRef.current / BASE_HEIGHT;
-  birdV.current = BASE_FLAP * hScale;
-    // play wing sound if available
-    const wing = audioRef.current["wing"];
-    if (wing) {
-      try {
-        wing.currentTime = 0;
-        wing.play();
-      } catch {}
+    if (gameOverRef.current) return;
+    const hScale = heightRef.current / BASE_HEIGHT;
+    birdV.current = BASE_FLAP * hScale;
+    // play wing sound using a small audio pool with throttling to avoid stutter on mobile
+    const now = performance.now();
+    if (now - wingLastAtRef.current > 120) {
+      const pool = wingPoolRef.current;
+      const baseWing = audioRef.current["wing"];
+      let a: HTMLAudioElement | undefined = undefined;
+      if (pool.length > 0) {
+        a = pool[wingPoolIdxRef.current % pool.length];
+        wingPoolIdxRef.current = (wingPoolIdxRef.current + 1) % pool.length;
+      } else if (baseWing) {
+        a = baseWing;
+      }
+      if (a) {
+        try {
+          a.currentTime = 0;
+          a.play();
+        } catch {}
+      }
+      wingLastAtRef.current = now;
     }
-  }, [gameOver, running]);
+  }, []);
 
   // input handlers
   useEffect(() => {
@@ -116,10 +143,13 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const onPointerDown = () => flap();
-    canvas.addEventListener("pointerdown", onPointerDown);
+    const onPointerDown = (e: PointerEvent) => {
+      e.preventDefault();
+      flap();
+    };
+    canvas.addEventListener("pointerdown", onPointerDown, { passive: false } as AddEventListenerOptions);
     return () => {
-      canvas.removeEventListener("pointerdown", onPointerDown);
+      canvas.removeEventListener("pointerdown", onPointerDown as any);
     };
   }, [flap]);
 
@@ -139,7 +169,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
       const hScale = H / BASE_HEIGHT;
       const GROUND_Y = H - BASE_GROUND_H * hScale;
       // difficulty-adjusted gap
-      const level = Math.min(MAX_LEVEL, Math.floor(score / 10));
+      const level = Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10));
       const gapMul = Math.max(1 - GAP_REDUCTION_PER_LEVEL * level, 0.65);
       const GAP = Math.max(60 * hScale, BASE_GAP * hScale * gapMul);
       const PIPE_WIDTH = BASE_PIPE_WIDTH * wScale;
@@ -156,12 +186,12 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
       lastTime = now;
 
   // update when running
-  if (running && !gameOver) {
+  if (runningRef.current && !gameOverRef.current) {
         // spawn pipes
         if (lastSpawnAt.current === 0) lastSpawnAt.current = now;
         // difficulty-adjusted spawn interval
         {
-          const level = Math.min(MAX_LEVEL, Math.floor(score / 10));
+          const level = Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10));
           const spawnInterval = Math.max(900, PIPE_INTERVAL_MS - INTERVAL_REDUCTION_MS_PER_LEVEL * level);
           if (now - lastSpawnAt.current > spawnInterval) {
             spawnPipe();
@@ -172,7 +202,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         // physics
   const H = heightRef.current;
   const hScale = H / BASE_HEIGHT;
-  const level = Math.min(MAX_LEVEL, Math.floor(score / 10));
+  const level = Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10));
   const gravityMul = Math.min(1 + GRAVITY_PER_LEVEL * level, 1.4);
   const GRAVITY = BASE_GRAVITY * hScale * gravityMul;
         birdV.current += GRAVITY * (dt / 16.67);
@@ -188,7 +218,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         // move pipes
   const W = widthRef.current;
   const wScale = W / BASE_WIDTH;
-  const speedMul = Math.min(1 + SPEED_PER_LEVEL * Math.min(MAX_LEVEL, Math.floor(score / 10)), 1.6);
+  const speedMul = Math.min(1 + SPEED_PER_LEVEL * Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10)), 1.6);
   const dx = BASE_SPEED * speedMul * wScale * (dt / 16.67);
         pipes.current.forEach((p) => (p.x -= dx * 3));
         // remove offscreen
@@ -201,7 +231,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           const H2 = heightRef.current;
           const wS = W2 / BASE_WIDTH;
           const hS = H2 / BASE_HEIGHT;
-          const level = Math.min(MAX_LEVEL, Math.floor(score / 10));
+          const level = Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10));
           const gapMul = Math.max(1 - GAP_REDUCTION_PER_LEVEL * level, 0.65);
           const GAP = Math.max(60 * hS, BASE_GAP * hS * gapMul);
           const PIPE_WIDTH = BASE_PIPE_WIDTH * wS;
@@ -210,7 +240,11 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           const r = 12 * Math.min(wS, hS); // bird radius
           if (!p.passed && p.x + PIPE_WIDTH < birdX) {
             p.passed = true;
-            setScore((s) => s + 1);
+            setScore((s) => {
+              const ns = s + 1;
+              scoreRef.current = ns;
+              return ns;
+            });
             const point = audioRef.current["point"];
             if (point) {
               try {
@@ -224,6 +258,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           const topBottomY = birdY.current - r < p.gapY || birdY.current + r > p.gapY + GAP;
           if (inPipeX && topBottomY) {
             setGameOver(true);
+            gameOverRef.current = true;
             const hit = audioRef.current["hit"];
             const die = audioRef.current["die"];
             try {
@@ -247,6 +282,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         const r2 = 12 * Math.min(widthRef.current / BASE_WIDTH, hS2);
         if (birdY.current + r2 >= GROUND_Y || birdY.current - r2 <= 0) {
           setGameOver(true);
+          gameOverRef.current = true;
         }
       }
 
@@ -260,7 +296,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
       {
         /* scope block to avoid leaking variables */
       }
-      const levelDraw = Math.min(MAX_LEVEL, Math.floor(score / 10));
+      const levelDraw = Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10));
       const gapMulDraw = Math.max(1 - GAP_REDUCTION_PER_LEVEL * levelDraw, 0.65);
       const GAP = Math.max(60 * hScale, BASE_GAP * hScale * gapMulDraw);
       const GROUND_Y = H - BASE_GROUND_H * hScale;
@@ -292,7 +328,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
 
       // pipes (use green pipe sprite; flip for top). Skip drawing until loaded.
       // choose pre-tinted pipe sprite for current level
-      const levelIdx = Math.min(MAX_LEVEL, Math.floor(score / 10));
+      const levelIdx = Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10));
       const tintedPipe = tintedPipesRef.current[levelIdx];
       const pipeImg = imagesRef.current["pipe-green"];
       if ((tintedPipe || pipeImg) && assetsLoaded) {
@@ -324,7 +360,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           if (p.hasTrigger) {
             ctx.save();
             ctx.filter = "none"; // do not tint the rectangle
-            const levelHue = Math.min(MAX_LEVEL, Math.floor(score / 10)) * 45;
+            const levelHue = Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10)) * 45;
             ctx.fillStyle = `hsla(${levelHue}, 90%, 50%, 0.18)`;
             ctx.fillRect(p.x, p.gapY, PIPE_WIDTH, GAP);
             ctx.restore();
@@ -355,7 +391,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
 
   // score using digit sprites only when available (skip until loaded)
       const digits = digitsRef.current;
-      const sStr = String(score);
+  const sStr = String(scoreRef.current);
       if (digits.length === 10 && assetsLoaded) {
         const dH = 36 * Math.min(wScale, hScale);
         const dW = 24 * Math.min(wScale, hScale);
@@ -371,7 +407,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         }
       }
 
-      if (!running) {
+      if (!runningRef.current) {
         // show start message image
         const msg = imagesRef.current["message"];
         if (msg && assetsLoaded) {
@@ -400,7 +436,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [gameOver, running, score]);
+  }, []);
 
   // Size the canvas to the container (fullScreen) or base size
   useEffect(() => {
@@ -455,6 +491,15 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         });
       try {
         const base = "/flappy-bird-assets-master";
+            // create a small wing sound pool to avoid currentTime resets on the same element
+            const wingSrc = `${base}/audio/wing.wav`;
+            const wingPool: HTMLAudioElement[] = [];
+            for (let i = 0; i < 4; i++) {
+              const clone = new Audio(wingSrc);
+              clone.preload = "auto";
+              clone.volume = 0.6;
+              wingPool.push(clone);
+            }
         const entries: [string, string][] = [
           ["background-day", `${base}/sprites/background-day.png`],
           ["base", `${base}/sprites/base.png`],
@@ -489,6 +534,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         // Precompute tinted pipe variants for each level (0..MAX_LEVEL)
         const basePipe = map["pipe-green"];
         const tints: HTMLCanvasElement[] = [];
+              wingPoolRef.current = wingPool;
         if (basePipe) {
           for (let lvl = 0; lvl <= MAX_LEVEL; lvl++) {
             const deg = lvl * 45; // 0..360

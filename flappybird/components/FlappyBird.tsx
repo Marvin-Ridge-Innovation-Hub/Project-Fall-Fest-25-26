@@ -1,22 +1,67 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import DevMenu, { loadDevSettings } from "./DevMenu";
 
 // Base design values (used to scale physics and sizes for different viewports)
-const BASE_WIDTH = 480;
-const BASE_HEIGHT = 640;
-const BASE_PIPE_WIDTH = 70;
-const BASE_GAP = 160;
-const PIPE_INTERVAL_MS = 1400; // Increased for better spacing between pipes
-const BASE_SPEED = 3.5; // Increased for better game feel
-const BASE_GRAVITY = 0.45; // velocity per frame (vertical)
-const BASE_FLAP = -8.5; // jump impulse (vertical)
+// These can be overridden by dev settings from API
+export let BASE_WIDTH = 480;
+export let BASE_HEIGHT = 640;
+export let BASE_PIPE_WIDTH = 70;
+export let BASE_GAP = 160;
+export let PIPE_INTERVAL_MS = 1400; // Increased for better spacing between pipes
+export let BASE_SPEED = 3.5; // Increased for better game feel
+export let BASE_GRAVITY = 0.45; // velocity per frame (vertical)
+export let BASE_FLAP = -8.5; // jump impulse (vertical)
 // Difficulty scaling
-const MAX_LEVEL = 8; // stop scaling after score >= 80
-const SPEED_PER_LEVEL = 0.05; // Reduced from 0.08 for more gradual difficulty increase
-const GRAVITY_PER_LEVEL = 0.04; // Reduced from 0.04
-const GAP_REDUCTION_PER_LEVEL = 0.02; // Reduced from 0.06
-const INTERVAL_REDUCTION_MS_PER_LEVEL = 50; // Reduced from 70ms spawn interval per level
+export let MAX_LEVEL = 8; // stop scaling after score >= 80
+export let SPEED_PER_LEVEL = 0.05; // Reduced from 0.08 for more gradual difficulty increase
+export let GRAVITY_PER_LEVEL = 0.04; // Reduced from 0.04
+export let GAP_REDUCTION_PER_LEVEL = 0.02; // Reduced from 0.06
+export let INTERVAL_REDUCTION_MS_PER_LEVEL = 50; // Reduced from 70ms spawn interval per level
+export let PORTAL_EXTRA_SPACING = 800; // Extra spacing after every 10th pipe (portals) for reaction time
+
+// Export a setter function for settings
+export function applyGameSettings(settings: {
+  BASE_WIDTH?: number;
+  BASE_HEIGHT?: number;
+  BASE_PIPE_WIDTH?: number;
+  BASE_GAP?: number;
+  PIPE_INTERVAL_MS?: number;
+  BASE_SPEED?: number;
+  BASE_GRAVITY?: number;
+  BASE_FLAP?: number;
+  MAX_LEVEL?: number;
+  SPEED_PER_LEVEL?: number;
+  GRAVITY_PER_LEVEL?: number;
+  GAP_REDUCTION_PER_LEVEL?: number;
+  INTERVAL_REDUCTION_MS_PER_LEVEL?: number;
+  PORTAL_EXTRA_SPACING?: number;
+}) {
+  if (settings.BASE_WIDTH !== undefined) BASE_WIDTH = settings.BASE_WIDTH;
+  if (settings.BASE_HEIGHT !== undefined) BASE_HEIGHT = settings.BASE_HEIGHT;
+  if (settings.BASE_PIPE_WIDTH !== undefined) BASE_PIPE_WIDTH = settings.BASE_PIPE_WIDTH;
+  if (settings.BASE_GAP !== undefined) BASE_GAP = settings.BASE_GAP;
+  if (settings.PIPE_INTERVAL_MS !== undefined) PIPE_INTERVAL_MS = settings.PIPE_INTERVAL_MS;
+  if (settings.BASE_SPEED !== undefined) BASE_SPEED = settings.BASE_SPEED;
+  if (settings.BASE_GRAVITY !== undefined) BASE_GRAVITY = settings.BASE_GRAVITY;
+  if (settings.BASE_FLAP !== undefined) BASE_FLAP = settings.BASE_FLAP;
+  if (settings.MAX_LEVEL !== undefined) MAX_LEVEL = settings.MAX_LEVEL;
+  if (settings.SPEED_PER_LEVEL !== undefined) SPEED_PER_LEVEL = settings.SPEED_PER_LEVEL;
+  if (settings.GRAVITY_PER_LEVEL !== undefined) GRAVITY_PER_LEVEL = settings.GRAVITY_PER_LEVEL;
+  if (settings.GAP_REDUCTION_PER_LEVEL !== undefined) GAP_REDUCTION_PER_LEVEL = settings.GAP_REDUCTION_PER_LEVEL;
+  if (settings.INTERVAL_REDUCTION_MS_PER_LEVEL !== undefined) INTERVAL_REDUCTION_MS_PER_LEVEL = settings.INTERVAL_REDUCTION_MS_PER_LEVEL;
+  if (settings.PORTAL_EXTRA_SPACING !== undefined) PORTAL_EXTRA_SPACING = settings.PORTAL_EXTRA_SPACING;
+}
+
+// Load dev settings from API on startup
+if (typeof window !== "undefined") {
+  loadDevSettings().then(() => {
+    console.log("🔧 Dev settings loaded from API");
+  }).catch((e) => {
+    console.error("Failed to load dev settings:", e);
+  });
+}
 
 type Pipe = {
   x: number;
@@ -41,6 +86,9 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   // City backgrounds: array of cities, each containing array of layers
   const cityBackgroundsRef = useRef<HTMLImageElement[][]>([]);
   const audioRef = useRef<{ [k: string]: HTMLAudioElement }>({});
+  // Ambient sounds for each level
+  const ambientSoundsRef = useRef<HTMLAudioElement[]>([]);
+  const currentAmbientRef = useRef<HTMLAudioElement | null>(null);
   const birdFrameRef = useRef<number>(0);
   const birdFrameTimeRef = useRef<number>(0);
   const digitsRef = useRef<HTMLImageElement[]>([]);
@@ -52,6 +100,37 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
     saturations: [],
     lightnesses: [],
   });
+  // Visual effects refs
+  const rainParticlesRef = useRef<Array<{x: number; y: number; speed: number; length: number}>>([]);
+  const windParticlesRef = useRef<Array<{x: number; y: number; speed: number; size: number; opacity: number}>>([]);
+  const cityLightsRef = useRef<Array<{x: number; y: number; size: number; brightness: number; flickerSpeed: number}>>([]);
+  
+  // Bird flock refs for background narrative
+  const birdFlockRef = useRef<Array<{
+    x: number;
+    y: number;
+    speedX: number;
+    speedY: number;
+    color: 'red' | 'blue' | 'yellow';
+    flapFrame: number;
+    size: number;
+  }>>([]);
+  const flockSpawnTimerRef = useRef<number>(0);
+  const victoryFlockRef = useRef<Array<{
+    x: number;
+    y: number;
+    targetX: number;
+    targetY: number;
+    speedX: number;
+    speedY: number;
+    color: 'red' | 'blue' | 'yellow';
+    flapFrame: number;
+    size: number;
+    hasJoined: boolean; // Track if bird has joined the flock
+    joinedAtX?: number; // Position where bird joined (for reference)
+    joinedAtY?: number;
+  }>>([]);
+  const birdChirpSoundRef = useRef<HTMLAudioElement | null>(null);
 
   const [running, setRunning] = useState<boolean>(false);
   const [gameOver, setGameOver] = useState<boolean>(false);
@@ -71,6 +150,8 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   const [lastInitial, setLastInitial] = useState<string>("");
   const [requiresProfile, setRequiresProfile] = useState<boolean>(false);
   const [submitting, setSubmitting] = useState<boolean>(false);
+  const [devMode, setDevMode] = useState<boolean>(false);
+  const [showDevMenu, setShowDevMenu] = useState<boolean>(false);
 
   // game state refs (for raf loop without stale closures)
   const birdY = useRef<number>(BASE_HEIGHT / 2);
@@ -79,6 +160,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   const pipes = useRef<Pipe[]>([]);
   const lastSpawnAt = useRef<number>(0);
   const pipeSpawnCount = useRef<number>(0);
+  const lastPipeWasPortal = useRef<boolean>(false); // Track if last spawned pipe was a portal (for extra spacing)
   // Background management: 0 = flappy bird default, 1-8 = cities
   const currentBgIndex = useRef<number>(0);
   // tint is tied to difficulty level
@@ -104,6 +186,16 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   const portalIdleGainRef = useRef<GainNode | null>(null);
   const portalWarpSoundRef = useRef<HTMLAudioElement | null>(null);
   const activePortalRef = useRef<Pipe | null>(null); // Track which portal we're near
+  const birdScaleRef = useRef<number>(1); // Track bird scale for portal teleport effect
+  const birdRotationRef = useRef<number>(0); // Track bird rotation for spin effect (in radians)
+  const birdSelfRotationRef = useRef<number>(0); // Track bird's self-rotation (spinning around its own center)
+  const birdXOffsetRef = useRef<number>(0); // Track horizontal offset from normal position
+  const birdYOffsetRef = useRef<number>(0); // Track vertical offset for spiral effect
+  const portalAnimationPhaseRef = useRef<number>(0); // 0=normal, 1=sucking in, 2=spitting out
+  const portalAnimationStartTimeRef = useRef<number>(0); // When the animation started
+  const portalAnimationDuration = 750; // Animation duration in milliseconds (1.5 seconds - 2x faster)
+  const animatedPortalRef = useRef<Pipe | null>(null); // Track which portal we're currently animating
+  const completedPortalsRef = useRef<Set<Pipe>>(new Set()); // Track which portals we've already animated
 
   const reset = useCallback(() => {
     const startScore = startScoreRef.current;
@@ -122,6 +214,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
     pipes.current = [];
     lastSpawnAt.current = 0;
   pipeSpawnCount.current = 0;
+    lastPipeWasPortal.current = false; // Reset portal spacing flag
     victoryFlyoutRef.current = false;
     victoryFlyoutStartRef.current = 0;
     victoryCompleteRef.current = false;
@@ -135,6 +228,23 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
     }
     currentMusicLevelRef.current = -1;
     
+    // Stop and reset ambient sounds
+    if (currentAmbientRef.current) {
+      currentAmbientRef.current.pause();
+      currentAmbientRef.current.currentTime = 0;
+      currentAmbientRef.current = null;
+    }
+    
+    // Clear particle effects
+    rainParticlesRef.current = [];
+    windParticlesRef.current = [];
+    cityLightsRef.current = [];
+    
+    // Clear bird flocks
+    birdFlockRef.current = [];
+    victoryFlockRef.current = [];
+    flockSpawnTimerRef.current = 0;
+    
     // Stop portal sounds
     if (portalIdleSourceRef.current) {
       try {
@@ -146,6 +256,15 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
       portalIdleGainRef.current.gain.value = 0;
     }
     activePortalRef.current = null;
+    birdScaleRef.current = 1;
+    birdRotationRef.current = 0;
+    birdSelfRotationRef.current = 0;
+    birdXOffsetRef.current = 0;
+    birdYOffsetRef.current = 0;
+    portalAnimationPhaseRef.current = 0;
+    portalAnimationStartTimeRef.current = 0;
+    animatedPortalRef.current = null;
+    completedPortalsRef.current.clear();
     
     // reset submission fields
     setStudentId("");
@@ -168,6 +287,13 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           currentBgIndex.current = Math.floor(parsed / 10);
           console.log('🎮 Dev mode: Starting at score', parsed);
         }
+      }
+      
+      // Check for dev mode access
+      const devParam = params.get('dev');
+      if (devParam === 'mrdev123') {
+        setDevMode(true);
+        console.log('🔧 Dev mode enabled');
       }
     }
   }, []);
@@ -298,6 +424,10 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   const absolutePipeNumber = startScoreRef.current + pipeSpawnCount.current;
   const hasTrigger = absolutePipeNumber % 10 === 0;
   const isFinishLine = absolutePipeNumber === 90;
+  
+  // Track if this pipe is a portal for next spawn's spacing
+  lastPipeWasPortal.current = hasTrigger;
+  
   if (isFinishLine) {
     console.log('🏁 Finish line spawned! Absolute pipe:', absolutePipeNumber, 'Spawn count:', pipeSpawnCount.current);
   }
@@ -315,54 +445,72 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         // difficulty-adjusted spawn interval
         {
           const level = Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10));
-          const spawnInterval = Math.max(900, PIPE_INTERVAL_MS - INTERVAL_REDUCTION_MS_PER_LEVEL * level);
+          let spawnInterval = Math.max(900, PIPE_INTERVAL_MS - INTERVAL_REDUCTION_MS_PER_LEVEL * level);
+          
+          // Add extra spacing after portals (every 10th pipe) for player reaction time
+          if (lastPipeWasPortal.current) {
+            spawnInterval += PORTAL_EXTRA_SPACING;
+          }
+          
           if (now - lastSpawnAt.current > spawnInterval) {
             spawnPipe();
             lastSpawnAt.current = now;
           }
         }
 
+        // Spawn background bird flocks (only in levels 1-8, rare chance - roughly once per level)
+        if (currentBgIndex.current > 0 && !victoryFlyoutRef.current) {
+          flockSpawnTimerRef.current += dt;
+          
+          // Random spawn every 15-25 seconds (much rarer - about once every other level)
+          const spawnInterval = 15000 + Math.random() * 20000;
+          if (flockSpawnTimerRef.current > spawnInterval) {
+            flockSpawnTimerRef.current = 0;
+            
+            // Spawn a small flock of 3-6 birds
+            const flockSize = 3 + Math.floor(Math.random() * 4);
+            const colors: ('red' | 'blue' | 'yellow')[] = ['red', 'blue', 'yellow'];
+            const flockColor = colors[Math.floor(Math.random() * colors.length)];
+            const startY = 100 + Math.random() * 200; // Random height in upper half
+            const speedX = 2 + Math.random() * 2; // Horizontal speed
+            
+            for (let i = 0; i < flockSize; i++) {
+              birdFlockRef.current.push({
+                x: -50 - i * 30, // Start off-screen left, staggered
+                y: startY + (Math.random() - 0.5) * 40, // Slight vertical variance
+                speedX: speedX,
+                speedY: (Math.random() - 0.5) * 0.5, // Slight up/down drift
+                color: flockColor,
+                flapFrame: Math.floor(Math.random() * 3),
+                size: 0.6 + Math.random() * 0.3, // Slightly smaller, varied sizes
+              });
+            }
+            
+            // Play chirping sound (will stop when flock goes off-screen)
+            if (birdChirpSoundRef.current) {
+              try {
+                birdChirpSoundRef.current.currentTime = 0;
+                birdChirpSoundRef.current.play().catch(() => {});
+              } catch {}
+            }
+          }
+        }
+
         // physics
   const H = heightRef.current;
   const hScale = H / BASE_HEIGHT;
-  const level = Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10));
-  const gravityMul = Math.min(1 + GRAVITY_PER_LEVEL * level, 1.4);
-  const GRAVITY = BASE_GRAVITY * hScale * gravityMul;
-        birdV.current += GRAVITY * (dt / 16.67);
-        birdY.current += birdV.current * (dt / 16.67);
-
-        // bird flap animation timer (cycle frames ~10 fps)
-        birdFrameTimeRef.current += dt;
-        if (birdFrameTimeRef.current > 100) {
-          birdFrameRef.current = (birdFrameRef.current + 1) % 3;
-          birdFrameTimeRef.current = 0;
-        }
-
-        // move pipes (freeze during victory flyout)
   const W = widthRef.current;
   const wScale = W / BASE_WIDTH;
   const hScalePipe = heightRef.current / BASE_HEIGHT;
-  const speedMul = Math.min(1 + SPEED_PER_LEVEL * Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10)), 1.6);
-  const dx = BASE_SPEED * speedMul * wScale * (dt / 16.67);
+  const PIPE_WIDTH = BASE_PIPE_WIDTH * hScalePipe;
+  
+        // Portal detection (must happen before physics to control gravity)
+        let nearestPortal: Pipe | null = null;
+        let nearestDistance = Infinity;
+        const birdPosX = widthRef.current * 0.25;
         
-        // Only move pipes if not in victory flyout
         if (!victoryFlyoutRef.current) {
-          pipes.current.forEach((p) => (p.x -= dx));
-          // Update parallax offset (raw dx, each layer will apply its own speed multiplier)
-          parallaxOffsetRef.current += dx;
-        }
-        
-        // remove offscreen
-        const PIPE_WIDTH = BASE_PIPE_WIDTH * hScalePipe; // Changed from wScale to hScale
-        pipes.current = pipes.current.filter((p) => p.x + PIPE_WIDTH > -10 * wScale);
-
-        // Portal sound effects (fade in/out idle sound, trigger warp when passing through)
-        if (!victoryFlyoutRef.current) {
-          const birdPosX = widthRef.current * 0.25;
-          let nearestPortal: Pipe | null = null;
-          let nearestDistance = Infinity;
-          
-          // Find the nearest portal ahead of the bird
+          // Find the nearest portal ahead of the bird (for triggering new animations)
           pipes.current.forEach((p) => {
             if (p.hasTrigger && !p.isFinishLine && !p.passed) {
               const portalCenterX = p.x + PIPE_WIDTH / 2;
@@ -376,6 +524,53 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
             }
           });
           
+          // If no unpassed portal found but animation is in progress, keep the animated portal
+          if (!nearestPortal && animatedPortalRef.current) {
+            nearestPortal = animatedPortalRef.current;
+            const portalCenterX = nearestPortal.x + PIPE_WIDTH / 2;
+            nearestDistance = Math.abs(portalCenterX - birdPosX);
+          }
+        } else {
+          portalAnimationPhaseRef.current = 0;
+        }
+  
+  const level = Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10));
+  const gravityMul = Math.min(1 + GRAVITY_PER_LEVEL * level, 1.4);
+  const GRAVITY = BASE_GRAVITY * hScale * gravityMul;
+        
+        // Pause gravity during portal animation, apply normally otherwise
+        const animationActive = portalAnimationStartTimeRef.current > 0;
+        if (!animationActive) {
+          birdV.current += GRAVITY * (dt / 16.67);
+          birdY.current += birdV.current * (dt / 16.67);
+        } else {
+          // During animation, gradually reduce velocity to prevent sudden drops
+          birdV.current *= 0.92; // Dampen velocity during animation
+        }
+
+        // bird flap animation timer (cycle frames ~10 fps)
+        birdFrameTimeRef.current += dt;
+        if (birdFrameTimeRef.current > 100) {
+          birdFrameRef.current = (birdFrameRef.current + 1) % 3;
+          birdFrameTimeRef.current = 0;
+        }
+
+        // move pipes (freeze during victory flyout)
+  const speedMul = Math.min(1 + SPEED_PER_LEVEL * Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10)), 1.6);
+  const dx = BASE_SPEED * speedMul * wScale * (dt / 16.67);
+        
+        // Only move pipes if not in victory flyout
+        if (!victoryFlyoutRef.current) {
+          pipes.current.forEach((p) => (p.x -= dx));
+          // Update parallax offset (raw dx, each layer will apply its own speed multiplier)
+          parallaxOffsetRef.current += dx;
+        }
+        
+        // remove offscreen
+        pipes.current = pipes.current.filter((p) => p.x + PIPE_WIDTH > -10 * wScale);
+
+        // Portal sound effects and animation (nearestPortal already found above)
+        if (!victoryFlyoutRef.current) {
           const ctx = audioCtxRef.current;
           const idleBuffer = portalIdleBufferRef.current;
           const warpSound = portalWarpSoundRef.current;
@@ -387,6 +582,207 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
             // Calculate volume based on distance (0 to 1)
             const fadeVolume = Math.max(0, Math.min(1, 1 - (nearestDistance / fadeInDistance)));
             const targetVolume = fadeVolume * 0.4; // Max 40% volume for idle
+            
+            // Trigger animation close to portal, but use time-based progression
+            const triggerDistance = PIPE_WIDTH * 1.2; // Trigger close to portal (1.2 pipe widths)
+            
+            // Check if we haven't animated this portal yet
+            const alreadyAnimated = completedPortalsRef.current.has(nearestPortal);
+            const animationInProgress = portalAnimationStartTimeRef.current > 0;
+            
+            // Start animation if we're in range and haven't animated this portal
+            if (nearestDistance < triggerDistance && !alreadyAnimated && !animationInProgress) {
+              portalAnimationStartTimeRef.current = now;
+              animatedPortalRef.current = nearestPortal;
+            }
+            
+            // Run animation if it's in progress
+            if (animationInProgress && animatedPortalRef.current === nearestPortal) {
+              
+              // Calculate progress based on time elapsed (0 to 1 over the duration)
+              const elapsed = now - portalAnimationStartTimeRef.current;
+              const progress = Math.min(1, elapsed / portalAnimationDuration);
+              
+              // If animation is complete, reset it
+              if (progress >= 1.0) {
+                portalAnimationPhaseRef.current = 0;
+                portalAnimationStartTimeRef.current = 0;
+                // Mark this portal as completed so we don't animate it again
+                if (animatedPortalRef.current) {
+                  completedPortalsRef.current.add(animatedPortalRef.current);
+                }
+                animatedPortalRef.current = null;
+                birdScaleRef.current = 1.0;
+                birdXOffsetRef.current = 0;
+                birdYOffsetRef.current = 0;
+                birdRotationRef.current = 0;
+                birdSelfRotationRef.current = 0;
+                // Reset velocity to slight upward movement to prevent instant drop
+                birdV.current = BASE_FLAP * hScale * 0.3; // Gentle upward velocity
+              } else {
+                // Calculate portal center position (type-safe access)
+                const portal = nearestPortal as Pipe;
+                const portalCenterX = portal.x + PIPE_WIDTH / 2;
+              
+                // Calculate GAP height to find true center of the gap
+                const level = Math.min(MAX_LEVEL, Math.floor(scoreRef.current / 10));
+                const gapMul = Math.max(1 - GAP_REDUCTION_PER_LEVEL * level, 0.65);
+                const GAP = Math.max(60 * hScale, BASE_GAP * hScale * gapMul);
+                const portalCenterY = portal.gapY + GAP / 2; // True center of the gap
+              
+                // Fixed entry/exit angles for left-to-right flow through portal
+                // Entry from left side (π radians = 180°), exit to right side (0 radians = 0°)
+                const entryAngle = Math.PI; // Left side of portal
+                const exitAngle = 0; // Right side of portal
+              
+                // Calculate portal visual radius for contained spiral
+                // Portal radius is min(pw * 0.8, gapH * 0.4), so spiral should be smaller
+                const portalVisualRadius = Math.min(PIPE_WIDTH * 0.8, (portal.gapY + 50) * 0.4); // Approximate
+                const spiralStartRadius = portalVisualRadius * 0.6; // 60% of portal radius for safe containment
+              
+              // Phase 0: Natural approach (0 to 0.4 progress) - smoothly guide bird toward portal center
+              if (progress < 0.4) {
+                portalAnimationPhaseRef.current = 1;
+                const approachProgress = progress / 0.4; // 0 to 1
+                
+                // Gentle ease-in-out for natural movement
+                const eased = approachProgress < 0.5
+                  ? 2 * approachProgress * approachProgress
+                  : 1 - Math.pow(-2 * approachProgress + 2, 2) / 2;
+                
+                // Start scaling down slightly as bird approaches
+                birdScaleRef.current = 1.0 - (eased * 0.1); // 1.0 → 0.9
+                
+                // Minimal rotation for natural movement
+                birdRotationRef.current = 0;
+                
+                // Start self-rotation (spinning around bird's own center) - very slow at first
+                // Negative rotation to roll WITH the spiral direction
+                birdSelfRotationRef.current = -(eased * eased * Math.PI * 0.15); // Quadratic acceleration, up to 0.075 spins (clockwise)
+                
+                // Interpolate Y toward portal center, keep X mostly natural
+                const currentX = birdPosX;
+                const currentY = birdY.current;
+                
+                // Target: Move vertically toward portal center, with slight X pull
+                const targetX = currentX + (portalCenterX - currentX) * 0.3 * eased; // Gentle X pull
+                const targetY = portalCenterY; // Directly to center vertically
+                
+                // Smooth interpolation (stronger vertical, gentle horizontal)
+                const interpX = currentX + (targetX - currentX) * eased;
+                const interpY = currentY + (targetY - currentY) * eased;
+                
+                birdXOffsetRef.current = interpX - birdPosX;
+                birdYOffsetRef.current = interpY - birdY.current;
+                
+              // Phase 1: Spiraling in (0.4 to 0.6 progress) - spiral from current position to CENTER
+              } else if (progress < 0.6) {
+                portalAnimationPhaseRef.current = 1;
+                const suckProgress = (progress - 0.4) / 0.2; // 0 to 1 during suck phase
+                
+                // Very gentle linear easing for slower, smooth movement
+                const eased = suckProgress; // Linear (slowest possible)
+                
+                // Scale down dramatically (0.9 → 0.15, continuing from approach phase)
+                birdScaleRef.current = 0.9 - (eased * 0.75);
+                
+                // Calculate current angle from bird to portal center for natural spiral
+                const currentAngle = Math.atan2(
+                  portalCenterY - birdY.current,
+                  portalCenterX - birdPosX
+                );
+                
+                // Spiral: Current position → spiral inward → center
+                // Interpolate angle from current to entry angle (left side)
+                const spiralAngle = currentAngle - (eased * (currentAngle - entryAngle));
+                
+                // Bird rotation (visual spin) - very slow
+                birdRotationRef.current = eased * Math.PI * 1.0; // 0.5 spins (reduced further)
+                
+                // Self-rotation accelerates as bird spirals in (continuing from Phase 0)
+                // Negative to roll WITH the spiral (clockwise self-spin for counterclockwise orbit)
+                const totalSelfRotation = -(Math.PI * 0.15 + (eased * eased * Math.PI * 1.0)); // 0.075 + up to 0.5 spins (clockwise)
+                birdSelfRotationRef.current = totalSelfRotation;
+                
+                // Spiral radius: Start from current distance, shrink to center
+                // Cap the starting radius to stay within portal bounds
+                const currentDistance = Math.sqrt(
+                  Math.pow(portalCenterX - birdPosX, 2) + 
+                  Math.pow(portalCenterY - birdY.current, 2)
+                );
+                const maxStartRadius = spiralStartRadius; // Stay within portal
+                const spiralRadius = Math.min(currentDistance, maxStartRadius) * (1 - eased);
+                
+                // Calculate absolute target position on the spiral
+                const targetX = portalCenterX + Math.cos(spiralAngle) * spiralRadius;
+                const targetY = portalCenterY + Math.sin(spiralAngle) * spiralRadius;
+                
+                // Set offset relative to where bird would naturally be drawn
+                birdXOffsetRef.current = targetX - birdPosX;
+                birdYOffsetRef.current = targetY - birdY.current;
+                
+              // Phase 1.5: At portal center (0.6 to 0.62 progress) - very brief pause
+              } else if (progress < 0.62) {
+                portalAnimationPhaseRef.current = 1;
+                const centerProgress = (progress - 0.6) / 0.02; // 0 to 1 (minimal pause)
+                
+                // Stay at minimum scale
+                birdScaleRef.current = 0.15;
+                
+                // Continue rotation very slowly
+                birdRotationRef.current = Math.PI * 1.0 + centerProgress * Math.PI * 0.2; // Very slow rotation
+                
+                // Self-rotation at maximum speed at portal center (clockwise)
+                birdSelfRotationRef.current = -(Math.PI * 1.15 + centerProgress * Math.PI * 0.25); // Peak spinning speed (negative = clockwise)
+                
+                // Stay at portal center with slight wobble
+                const wobble = Math.sin(centerProgress * Math.PI * 2) * 3;
+                birdXOffsetRef.current = portalCenterX - birdPosX + wobble;
+                birdYOffsetRef.current = portalCenterY - birdY.current;
+                
+              // Phase 2: Spiraling out (0.62 to 1.0 progress) - long graceful exit from CENTER to RIGHT
+              } else {
+                portalAnimationPhaseRef.current = 2;
+                const spitProgress = (progress - 0.62) / 0.38; // 0 to 1 during spit phase (38% of total time)
+                
+                // Very gentle linear easing for slower exit
+                const eased = spitProgress; // Linear (slowest possible)
+                
+                // Scale back up ultra slowly (0.15 → 1.0) with cube root for extremely gradual scale-up (3x slower)
+                const scaleEased = Math.pow(eased, 1/3); // Cube root easing for ultra gradual scale-up
+                birdScaleRef.current = 0.15 + (scaleEased * 0.85);
+                
+                // Spiral path: Start at center/top (0°), curve downward to right (0°)
+                // Create a smooth arc from center to right (0° -> -90° -> 0° going under)
+                const spiralAngle = exitAngle - (1 - eased) * Math.PI; // Start at 0°, dip to -90°, back to 0°
+                
+                // Bird rotation (visual spin) - very slow deceleration
+                birdRotationRef.current = (Math.PI * 1.2) * (1 - eased); // Reduced from 1.8
+                
+                // Self-rotation decelerates back to normal (slowing down from max speed)
+                // Negative for clockwise spin that matches spiral roll
+                const maxSelfRotation = -(Math.PI * 1.4); // Total accumulated at end of center phase (negative = clockwise)
+                const decelerationFactor = Math.pow(1 - eased, 2); // Quadratic deceleration
+                birdSelfRotationRef.current = maxSelfRotation * decelerationFactor; // Slow down to 0
+                
+                // Spiral out with expanding motion toward RIGHT side
+                const spiralRadius = spiralStartRadius * eased;
+                
+                // Calculate absolute target position on the exit spiral
+                const targetX = portalCenterX + Math.cos(spiralAngle) * spiralRadius;
+                const targetY = portalCenterY + Math.sin(spiralAngle) * spiralRadius;
+                
+                // Smoothly interpolate back to natural position
+                const naturalX = birdPosX;
+                const naturalY = birdY.current;
+                
+                // Smoother return with quartic easing
+                const returnEase = eased * eased;
+                birdXOffsetRef.current = (targetX - naturalX) * (1 - returnEase);
+                birdYOffsetRef.current = (targetY - naturalY) * (1 - returnEase);
+              }
+              }
+            }
             
             // Initialize WebAudio nodes if not already playing
             if (!portalIdleSourceRef.current && targetVolume > 0) {
@@ -427,6 +823,14 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
             }
           } else {
             // No portal nearby, fade out and stop idle sound
+            birdScaleRef.current = 1.0; // Reset bird scale
+            birdRotationRef.current = 0; // Reset rotation
+            birdXOffsetRef.current = 0; // Reset X offset
+            birdYOffsetRef.current = 0; // Reset Y offset
+            birdSelfRotationRef.current = 0; // Reset self-rotation
+            portalAnimationPhaseRef.current = 0; // Reset animation phase
+            portalAnimationStartTimeRef.current = 0; // Reset animation timer
+            animatedPortalRef.current = null; // Reset animated portal
             if (portalIdleGainRef.current && portalIdleSourceRef.current) {
               const gainNode = portalIdleGainRef.current;
               const currentGain = gainNode.gain.value;
@@ -467,7 +871,58 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
             victoryFlyoutStartRef.current = now;
             birdX.current = W2 * 0.25; // Initialize bird X position
             birdV.current = BASE_FLAP * hS * 0.7; // Set upward velocity to keep bird airborne
+            
             // Don't play sound yet - will play when bird goes off screen
+          }
+          
+          // Spawn victory flock when approaching finish line (earlier, smoother)
+          if (p.isFinishLine && !p.passed && victoryFlockRef.current.length === 0 && p.x < birdPosX + 300 * wS) {
+            console.log('🐦 Spawning victory flock from distance...');
+            
+            const colors: ('red' | 'blue' | 'yellow')[] = ['red', 'blue', 'yellow'];
+            const flockSize = 20 + Math.floor(Math.random() * 15); // 20-35 birds
+            
+            // Spawn birds from various positions around the screen edges
+            for (let i = 0; i < flockSize; i++) {
+              const side = Math.random();
+              let startX, startY;
+              
+              if (side < 0.33) {
+                // From left side
+                startX = -100 - Math.random() * 200;
+                startY = Math.random() * H2;
+              } else if (side < 0.66) {
+                // From top
+                startX = Math.random() * W2;
+                startY = -100 - Math.random() * 200;
+              } else {
+                // From right side (behind)
+                startX = W2 + 100 + Math.random() * 200;
+                startY = Math.random() * H2;
+              }
+              
+              victoryFlockRef.current.push({
+                x: startX,
+                y: startY,
+                targetX: birdPosX, // Initial target (will be updated to fly off-screen)
+                targetY: birdY.current,
+                speedX: 0,
+                speedY: 0,
+                color: colors[Math.floor(Math.random() * colors.length)],
+                flapFrame: Math.floor(Math.random() * 3),
+                size: 0.7 + Math.random() * 0.4,
+                hasJoined: false, // Initially false, set to true when near player
+              });
+            }
+            
+            // Play chirping sound for victory flock
+            if (birdChirpSoundRef.current) {
+              try {
+                birdChirpSoundRef.current.currentTime = 0;
+                birdChirpSoundRef.current.volume = 0.7; // Louder for victory
+                birdChirpSoundRef.current.play().catch(() => {});
+              } catch {}
+            }
           }
           
           if (!p.passed && p.x + PIPE_WIDTH < birdPosX) {
@@ -482,6 +937,65 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
                 const newBgIndex = Math.floor(ns / 10);
                 if (newBgIndex !== currentBgIndex.current && newBgIndex <= 8) {
                   currentBgIndex.current = newBgIndex;
+                  
+                  // Switch ambient sound and initialize particles for new level
+                  if (ambientSoundsRef.current && ambientSoundsRef.current[newBgIndex]) {
+                    // Stop current ambient
+                    if (currentAmbientRef.current) {
+                      currentAmbientRef.current.pause();
+                      currentAmbientRef.current.currentTime = 0;
+                    }
+                    
+                    // Start new ambient
+                    const newAmbient = ambientSoundsRef.current[newBgIndex];
+                    if (newAmbient) {
+                      const playPromise = newAmbient.play();
+                      if (playPromise !== undefined) {
+                        playPromise.catch(() => {});
+                      }
+                      currentAmbientRef.current = newAmbient;
+                    }
+                  }
+                  
+                  // Initialize particle effects based on level
+                  // Level 0: No effects
+                  // Level 1: City lights (twinkling)
+                  // Level 2: Rain + light city ambience
+                  // Level 3: Wind particles (dust)
+                  // Level 4: Rain (melancholic)
+                  // Level 5: Light city lights
+                  // Level 6: City lights (futuristic bright)
+                  // Level 7: Wind (playful)
+                  // Level 8: Wind (desert, tumbleweeds)
+                  
+                  rainParticlesRef.current = [];
+                  windParticlesRef.current = [];
+                  cityLightsRef.current = [];
+                  
+                  if (newBgIndex === 2 || newBgIndex === 4) {
+                    // Rain levels
+                    for (let i = 0; i < 100; i++) {
+                      rainParticlesRef.current.push({
+                        x: Math.random() * 600,
+                        y: Math.random() * 600,
+                        speed: 3 + Math.random() * 2,
+                        length: 10 + Math.random() * 10
+                      });
+                    }
+                  }
+                  
+                  if (newBgIndex === 3 || newBgIndex === 7 || newBgIndex === 8) {
+                    // Wind levels
+                    for (let i = 0; i < 50; i++) {
+                      windParticlesRef.current.push({
+                        x: Math.random() * 600,
+                        y: Math.random() * 600,
+                        speed: 1 + Math.random(),
+                        size: 2 + Math.random() * 3,
+                        opacity: 0.3 + Math.random() * 0.3
+                      });
+                    }
+                  }
                 }
                 
                 // Switch background music at portals (every 10 points starting from 10)
@@ -545,8 +1059,8 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
               }
             }
           }
-          // collision check (AABB around bird) - skip during victory flyout
-          if (!victoryFlyoutRef.current) {
+          // collision check (AABB around bird) - skip during victory flyout and portal animation
+          if (!victoryFlyoutRef.current && portalAnimationStartTimeRef.current === 0) {
             const inPipeX = birdPosX + r > p.x && birdPosX - r < p.x + PIPE_WIDTH;
             const topBottomY = birdY.current - r < p.gapY || birdY.current + r > p.gapY + GAP;
             if (inPipeX && topBottomY) {
@@ -569,8 +1083,8 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
 
         });
 
-        // ceiling collision (bird hits top or bottom) - skip during victory flyout
-        if (!victoryFlyoutRef.current) {
+        // ceiling collision (bird hits top or bottom) - skip during victory flyout and portal animation
+        if (!victoryFlyoutRef.current && portalAnimationStartTimeRef.current === 0) {
           const H3 = heightRef.current;
           const hS2 = H3 / BASE_HEIGHT;
           const r2 = 12 * Math.min(widthRef.current / BASE_WIDTH, hS2);
@@ -720,6 +1234,184 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         // fallback sky while assets load
         ctx.fillStyle = "#87CEEB";
         ctx.fillRect(0, 0, W, H);
+      }
+      
+      // Draw particle effects (rain, wind, city lights) after background
+      if (assetsLoadedRef.current && currentBgIndex.current > 0) {
+        // Update and draw rain particles
+        if (rainParticlesRef.current.length > 0) {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(200, 220, 255, 0.6)';
+          ctx.lineWidth = 1.5;
+          
+          rainParticlesRef.current.forEach((particle) => {
+            // Draw rain drop
+            ctx.beginPath();
+            ctx.moveTo(particle.x, particle.y);
+            ctx.lineTo(particle.x, particle.y + particle.length);
+            ctx.stroke();
+            
+            // Update position
+            particle.y += particle.speed * (dt / 16.67);
+            
+            // Reset if off bottom
+            if (particle.y > H) {
+              particle.y = -particle.length;
+              particle.x = Math.random() * W;
+            }
+          });
+          ctx.restore();
+        }
+        
+        // Update and draw wind particles
+        if (windParticlesRef.current.length > 0) {
+          ctx.save();
+          
+          windParticlesRef.current.forEach((particle) => {
+            ctx.fillStyle = `rgba(200, 180, 160, ${particle.opacity})`;
+            ctx.fillRect(particle.x, particle.y, particle.size, particle.size);
+            
+            // Update position (drift right and slightly down)
+            particle.x += particle.speed * (dt / 16.67);
+            particle.y += particle.speed * 0.3 * (dt / 16.67);
+            
+            // Reset if off right edge
+            if (particle.x > W) {
+              particle.x = -particle.size;
+              particle.y = Math.random() * H;
+            }
+          });
+          ctx.restore();
+        }
+      }
+      
+      // Draw and update background bird flocks
+      if (assetsLoadedRef.current && birdFlockRef.current.length > 0) {
+        ctx.save();
+        
+        const birdsToRemove: number[] = [];
+        
+        birdFlockRef.current.forEach((bird, index) => {
+          // Update position
+          bird.x += bird.speedX * (dt / 16.67);
+          bird.y += bird.speedY * (dt / 16.67);
+          
+          // Update flap animation
+          bird.flapFrame = Math.floor((now / 100) % 3);
+          
+          // Get bird sprite
+          const flapStates = ['upflap', 'midflap', 'downflap'];
+          const spriteName = `${bird.color}bird-${flapStates[bird.flapFrame]}`;
+          const sprite = imagesRef.current[spriteName];
+          
+          if (sprite) {
+            const birdWidth = sprite.width * bird.size;
+            const birdHeight = sprite.height * bird.size;
+            
+            ctx.globalAlpha = 0.7; // Slightly transparent to show they're in background
+            ctx.drawImage(sprite, bird.x - birdWidth / 2, bird.y - birdHeight / 2, birdWidth, birdHeight);
+          }
+          
+          // Mark for removal if off-screen right
+          if (bird.x > W + 100) {
+            birdsToRemove.push(index);
+          }
+        });
+        
+        // Remove off-screen birds (reverse order to maintain indices)
+        for (let i = birdsToRemove.length - 1; i >= 0; i--) {
+          birdFlockRef.current.splice(birdsToRemove[i], 1);
+        }
+        
+        // Stop chirping sound when all birds are gone
+        if (birdFlockRef.current.length === 0 && birdChirpSoundRef.current && !birdChirpSoundRef.current.paused) {
+          birdChirpSoundRef.current.pause();
+          birdChirpSoundRef.current.currentTime = 0;
+        }
+        
+        ctx.globalAlpha = 1.0;
+        ctx.restore();
+      }
+      
+      // Draw and update victory flock (converging on player)
+      if (assetsLoadedRef.current && victoryFlockRef.current.length > 0 && victoryFlyoutRef.current) {
+        ctx.save();
+        
+        const birdsToRemove: number[] = [];
+        const wScale = W / BASE_WIDTH;
+        
+        // Check if player is still on screen
+        const playerX = birdX.current;
+        const playerY = birdY.current;
+        const playerOffScreen = playerX > W || playerX < -100;
+        
+        victoryFlockRef.current.forEach((bird, index) => {
+          // If player is off-screen, immediately set all birds to fly right
+          if (playerOffScreen && !bird.hasJoined) {
+            bird.hasJoined = true;
+            bird.speedX = BASE_SPEED * 1.6 * wScale;
+            bird.speedY = -0.5 + (Math.random() - 0.5) * 0.5;
+          }
+          
+          // If bird hasn't joined yet, converge toward player's CURRENT position
+          if (!bird.hasJoined) {
+            const dx = playerX - bird.x;
+            const dy = playerY - bird.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distance > 50) {
+              // Move towards player to join the flock
+              const speed = 4 + Math.random() * 2;
+              bird.speedX = (dx / distance) * speed;
+              bird.speedY = (dy / distance) * speed;
+            } else {
+              // Mark as joined and set fly-off velocity
+              bird.hasJoined = true;
+              bird.joinedAtX = bird.x;
+              bird.joinedAtY = bird.y;
+              bird.speedX = BASE_SPEED * 1.6 * wScale;
+              bird.speedY = -0.5 + (Math.random() - 0.5) * 0.5; // Slight vertical variation
+            }
+          } 
+          // Once joined, continue flying right (NEVER recalculate toward player)
+          // Just maintain the velocity that was set when they joined
+          
+          bird.x += bird.speedX * (dt / 16.67);
+          bird.y += bird.speedY * (dt / 16.67);
+          
+          // Update flap animation
+          bird.flapFrame = Math.floor((now / 100) % 3);
+          
+          // Get bird sprite
+          const flapStates = ['upflap', 'midflap', 'downflap'];
+          const spriteName = `${bird.color}bird-${flapStates[bird.flapFrame]}`;
+          const sprite = imagesRef.current[spriteName];
+          
+          if (sprite) {
+            const birdWidth = sprite.width * bird.size;
+            const birdHeight = sprite.height * bird.size;
+            
+            ctx.drawImage(sprite, bird.x - birdWidth / 2, bird.y - birdHeight / 2, birdWidth, birdHeight);
+          }
+          
+          // Mark for removal if off-screen right (flew away with player)
+          if (bird.x > W + 100) {
+            birdsToRemove.push(index);
+          }
+        });
+        
+        // Remove off-screen birds (reverse order to maintain indices)
+        for (let i = birdsToRemove.length - 1; i >= 0; i--) {
+          victoryFlockRef.current.splice(birdsToRemove[i], 1);
+        }
+        
+        // Stop chirping sound when all victory birds are gone
+        if (victoryFlockRef.current.length === 0 && birdChirpSoundRef.current && !birdChirpSoundRef.current.paused) {
+          birdChirpSoundRef.current.pause();
+          birdChirpSoundRef.current.currentTime = 0;
+        }
+        
+        ctx.restore();
       }
 
       // pipes (use green pipe sprite; flip for top). Skip drawing until loaded.
@@ -884,9 +1576,18 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         const bh = 24 * Math.min(wScale, hScale);
         // rotate slightly based on velocity
         const angle = Math.max(-0.8, Math.min(0.6, birdV.current / 10));
+        
+        // Apply portal animation effects
+        const scale = birdScaleRef.current;
+        const rotation = birdRotationRef.current;
+        const selfRotation = birdSelfRotationRef.current;
+        const xOffset = birdXOffsetRef.current;
+        const yOffset = birdYOffsetRef.current;
+        
         ctx.save();
-        ctx.translate(birdDrawX, birdY.current);
-        ctx.rotate(angle);
+        ctx.translate(birdDrawX + xOffset, birdY.current + yOffset);
+        ctx.rotate(angle + rotation + selfRotation); // Combine velocity tilt + orbital rotation + self-spin
+        ctx.scale(scale, scale);
         ctx.drawImage(frame, -bw / 2, -bh / 2, bw, bh);
         ctx.restore();
       }
@@ -1033,6 +1734,12 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           ["yellowbird-upflap", `${base}/sprites/yellowbird-upflap.png`],
           ["yellowbird-midflap", `${base}/sprites/yellowbird-midflap.png`],
           ["yellowbird-downflap", `${base}/sprites/yellowbird-downflap.png`],
+          ["redbird-upflap", `${base}/sprites/redbird-upflap.png`],
+          ["redbird-midflap", `${base}/sprites/redbird-midflap.png`],
+          ["redbird-downflap", `${base}/sprites/redbird-downflap.png`],
+          ["bluebird-upflap", `${base}/sprites/bluebird-upflap.png`],
+          ["bluebird-midflap", `${base}/sprites/bluebird-midflap.png`],
+          ["bluebird-downflap", `${base}/sprites/bluebird-downflap.png`],
           ["message", `${base}/sprites/message.png`],
           ["gameover", `${base}/sprites/gameover.png`],
         ];
@@ -1195,6 +1902,38 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           // WebAudio not available or decode failed; fall back to HTMLAudio
         }
         
+        // Load ambient sounds for each level
+        // Level mapping: 0=none, 1=none, 2=rain, 3=wind, 4=rain, 5=none, 6=none, 7=wind, 8=wind
+        const ambientFiles = [
+          null, // Level 0: no ambient
+          null, // Level 1: emotional-orchestra -> no ambient
+          '/rainsound.mp3', // Level 2: epic-love-romantic -> rain
+          '/windsound.mp3', // Level 3: epic-middle-eastern -> wind
+          '/rainsound.mp3', // Level 4: falling-grace -> rain (melancholic)
+          null, // Level 5: hopeful-acoustic -> no ambient
+          null, // Level 6: cyborg -> no ambient
+          '/windsound.mp3', // Level 7: pizzicato-children -> playful wind
+          '/windsound.mp3', // Level 8: western-journey -> desert wind
+        ];
+        const ambientSounds: HTMLAudioElement[] = [];
+        for (let i = 0; i < ambientFiles.length; i++) {
+          const file = ambientFiles[i];
+          if (file) {
+            const audio = new Audio(file);
+            audio.loop = true;
+            audio.volume = 0.4; // Rain and wind ambient volume
+            audio.preload = 'auto';
+            ambientSounds.push(audio);
+          } else {
+            ambientSounds.push(null as any);
+          }
+        }
+        
+        // Load bird chirping sound for flock encounters
+        const birdChirp = new Audio('/bird-chipping.mp3');
+        birdChirp.volume = 0.5;
+        birdChirp.preload = 'auto';
+        
         // Precompute tinted pipe variants for each level (0..MAX_LEVEL)
         const basePipe = map["pipe-green"];
         const tints: HTMLCanvasElement[] = [];
@@ -1253,6 +1992,8 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           pointBufferRef.current = pointBuffer;
           portalIdleBufferRef.current = portalIdleBuffer;
           portalWarpSoundRef.current = portalWarpSound;
+          ambientSoundsRef.current = ambientSounds;
+          birdChirpSoundRef.current = birdChirp;
           assetsLoadedRef.current = true;
           setAssetsLoaded(true);
         }
@@ -1402,6 +2143,24 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           </div>
         )}
       </div>
+      
+      {/* Dev Mode Indicator and Menu Button */}
+      {devMode && (
+        <div className="fixed top-4 right-4 z-40 flex items-center gap-2">
+          <div className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-semibold shadow-lg">
+            🔧 Dev Mode
+          </div>
+          <button
+            onClick={() => setShowDevMenu(true)}
+            className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-sm font-semibold shadow-lg hover:shadow-xl transition-all hover:scale-105 active:scale-95"
+          >
+            ⚙️ Settings
+          </button>
+        </div>
+      )}
+      
+      {/* Dev Menu Modal */}
+      {showDevMenu && <DevMenu onClose={() => setShowDevMenu(false)} />}
     </div>
   );
 }

@@ -3,6 +3,8 @@
  * Works offline by combining static data (public/data/scores.json) with user-submitted scores (localStorage)
  */
 
+import scoresData from "@/public/data/scores.json";
+
 export type ScoreEntry = {
   id?: string;
   firstName?: string;
@@ -13,16 +15,14 @@ export type ScoreEntry = {
 };
 
 const SCORES_STORAGE_KEY = "flappybird_scores";
-const EMBEDDED_SCORES_URL = "/data/scores.json";
 
 /**
  * Load embedded scores from the static JSON file (included in build output)
  */
 export async function loadEmbeddedScores(): Promise<ScoreEntry[]> {
   try {
-    const response = await fetch(EMBEDDED_SCORES_URL);
-    if (!response.ok) return [];
-    return (await response.json()) as ScoreEntry[];
+    const scores = scoresData as ScoreEntry[];
+    return Array.isArray(scores) ? scores : [];
   } catch (error) {
     console.warn("Failed to load embedded scores:", error);
     return [];

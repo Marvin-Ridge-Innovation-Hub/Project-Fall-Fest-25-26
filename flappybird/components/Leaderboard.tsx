@@ -1,20 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-
-type LegacyScore = {
-  name: string;
-  score: number;
-  createdAt: string;
-};
-
-type ScoreEntry = {
-  id?: string;
-  firstName?: string;
-  lastInitial?: string;
-  score: number;
-  createdAt: string;
-};
+import { getCombinedLeaderboard, type ScoreEntry } from "@/lib/scoreManager";
 
 export default function Leaderboard({ refreshKey }: { refreshKey: number }) {
   const [scores, setScores] = useState<ScoreEntry[]>([]);
@@ -25,9 +12,7 @@ export default function Leaderboard({ refreshKey }: { refreshKey: number }) {
     try {
       setLoading(true);
       setError(null);
-  const res = await fetch("/api/scores", { cache: "no-store" });
-      if (!res.ok) throw new Error("Failed to load scores");
-  const data = (await res.json()) as ScoreEntry[];
+      const data = await getCombinedLeaderboard();
       setScores(data);
     } catch (e: unknown) {
       setError((e as Error).message);

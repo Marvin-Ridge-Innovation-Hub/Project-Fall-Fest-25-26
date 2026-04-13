@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { applyGameSettings } from "./FlappyBird";
+import { loadGameSettings } from "@/lib/settingsLoader";
 
 type DevSettings = {
   BASE_WIDTH: number;
@@ -45,17 +46,14 @@ export default function DevMenu({ onClose }: { onClose: () => void }) {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Load settings from API on mount
+  // Load settings from embedded JSON on mount
   useEffect(() => {
     async function fetchSettings() {
       try {
-        const response = await fetch("/api/settings");
-        if (response.ok) {
-          const data = await response.json();
-          setSettings({ ...DEFAULT_SETTINGS, ...data });
-        }
+        const data = await loadGameSettings();
+        setSettings({ ...DEFAULT_SETTINGS, ...data });
       } catch (error) {
-        console.error("Failed to fetch settings:", error);
+        console.error("Failed to load settings:", error);
       } finally {
         setIsLoading(false);
       }
@@ -353,12 +351,7 @@ export async function loadDevSettings() {
   if (typeof window === "undefined") return;
   
   try {
-    const response = await fetch("/api/settings");
-    if (!response.ok) {
-      console.error("Failed to load settings, using defaults");
-      return;
-    }
-    const settings = await response.json() as DevSettings;
+    const settings = await loadGameSettings();
     
     // Apply settings using the setter function from FlappyBird
     applyGameSettings(settings);

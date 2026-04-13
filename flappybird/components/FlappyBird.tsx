@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import DevMenu, { loadDevSettings } from "./DevMenu";
+import { addOrUpdateScore } from "@/lib/scoreManager";
 
 // Base design values (used to scale physics and sizes for different viewports)
 // These can be overridden by dev settings from API
@@ -2015,29 +2016,28 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
       alert("Please enter your Student ID or email prefix.");
       return;
     }
+    
+    // In offline mode, require profile info for all new entries
+    if (!firstName.trim() || !lastInitial.trim()) {
+      alert("Please enter your first name and last initial.");
+      return;
+    }
+    
     setSubmitting(true);
     try {
-      const payload: any = { id: studentId.trim(), score };
-      if (requiresProfile) {
-        if (!firstName.trim() || !lastInitial.trim()) {
-          alert("Please enter your first name and last initial.");
-          setSubmitting(false);
-          return;
-        }
-        payload.firstName = firstName.trim();
-        payload.lastInitial = lastInitial.trim().charAt(0).toUpperCase();
-      }
-      const res = await fetch("/api/scores", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (res.status === 409) {
-        // server requests profile info for new id
-        setRequiresProfile(true);
-        return;
-      }
-      if (!res.ok) throw new Error("Failed to submit score");
+      const entry = {
+        id: studentId.trim().toLowerCase(),
+        firstName: firstName.trim(),
+        lastInitial: lastInitial.trim().charAt(0).toUpperCase(),
+        score,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      
+      // Save to localStorage (works offline)
+      addOrUpdateScore(entry);
+      
+      // Notify parent to refresh leaderboard
       onScoreSubmitted();
       reset();
     } catch (e) {
@@ -2045,7 +2045,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
     } finally {
       setSubmitting(false);
     }
-  }, [firstName, lastInitial, onScoreSubmitted, reset, requiresProfile, score, studentId]);
+  }, [firstName, lastInitial, onScoreSubmitted, reset, score, studentId]);
 
   return (
     <div className={`w-full h-full flex flex-col ${fullScreen ? "items-center justify-center" : "items-center"}`}>

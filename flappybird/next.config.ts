@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
-};
+  output: 'export',
+  // Optional: Ensures links work correctly with standard file servers
+  trailingSlash: true, };
 
 export default nextConfig;

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { sprites } from "@/lib/assets";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -20,7 +21,7 @@ export const metadata: Metadata = {
     description: "Play Flappy Bird and submit your score to the leaderboard.",
     images: [
       {
-        url: "/flappy-bird-assets-master/sprites/message.png",
+        url: sprites.message,
         width: 512,
         height: 512,
         alt: "Flappy Bird",
@@ -31,10 +32,10 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Flappy Bird",
     description: "Play Flappy Bird and submit your score to the leaderboard.",
-    images: ["/flappy-bird-assets-master/sprites/message.png"],
+    images: [sprites.message],
   },
   icons: {
-    icon: "/flappy-bird-assets-master/sprites/yellowbird-midflap.png",
+    icon: sprites.yellowbirdMidflap,
   },
 };
 
@@ -47,14 +48,13 @@ export default function RootLayout({
     <html lang="en">
       <head>
         {/* Preload key sprites so the first frame isn't blank */}
-        <link rel="preload" as="image" href="/flappy-bird-assets-master/sprites/background-day.png" />
-        <link rel="preload" as="image" href="/flappy-bird-assets-master/sprites/base.png" />
-        <link rel="preload" as="image" href="/flappy-bird-assets-master/sprites/pipe-green.png" />
-        <link rel="preload" as="image" href="/flappy-bird-assets-master/sprites/yellowbird-upflap.png" />
-        <link rel="preload" as="image" href="/flappy-bird-assets-master/sprites/yellowbird-midflap.png" />
-        <link rel="preload" as="image" href="/flappy-bird-assets-master/sprites/yellowbird-downflap.png" />
-        <link rel="preload" as="image" href="/flappy-bird-assets-master/sprites/message.png" />
-        <link rel="preload" as="image" href="/flappy-bird-assets-master/sprites/gameover.png" />
+        <link rel="preload" as="image" href={sprites.backgroundDay} />
+        <link rel="preload" as="image" href={sprites.pipeGreen} />
+        <link rel="preload" as="image" href={sprites.yellowbirdUpflap} />
+        <link rel="preload" as="image" href={sprites.yellowbirdMidflap} />
+        <link rel="preload" as="image" href={sprites.yellowbirdDownflap} />
+        <link rel="preload" as="image" href={sprites.message} />
+        <link rel="preload" as="image" href={sprites.gameover} />
         {/* Optional: preload number sprites used for the score */}
         {Array.from({ length: 10 }, (_, i) => (
           <link key={i} rel="preload" as="image" href={`/flappy-bird-assets-master/sprites/${i}.png`} />

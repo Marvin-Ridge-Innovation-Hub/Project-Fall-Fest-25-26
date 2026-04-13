@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import DevMenu, { loadDevSettings } from "./DevMenu";
 import { addOrUpdateScore } from "@/lib/scoreManager";
+import { sprites, digits, audio, music, ambientSounds, portalSounds, uiAssets } from "@/lib/assets";
 
 // Base design values (used to scale physics and sizes for different viewports)
 // These can be overridden by dev settings from API
@@ -316,17 +317,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
       // Start background music if we're starting at a level with music (iOS needs user gesture)
       const startLevel = Math.floor(scoreRef.current / 10);
       if (startLevel > 0 && startLevel <= 8 && !backgroundMusicRef.current) {
-        const musicFiles = [
-          '/music/emotional-orchestra-short-145091.mp3',
-          '/music/epic-love-inspirational-romantic-cinematic-30-seconds-406069.mp3',
-          '/music/epic-middle-eastern-30-seconds-percussion-389431.mp3',
-          '/music/falling-grace-348198.mp3',
-          '/music/hopeful-acoustic-travel-30-seconds-368800.mp3',
-          '/music/instrumental-music-for-video-blog-stories-cyborg-in-me-27-seconds-188532.mp3',
-          '/music/pizzicato-play-30-seconds-children-music-394553.mp3',
-          '/music/western-journey-30-seconds-183089.mp3'
-        ];
-        const musicFile = musicFiles[startLevel - 1];
+        const musicFile = music[startLevel - 1];
         if (musicFile) {
           const audio = new Audio(musicFile);
           audio.volume = 0.6;
@@ -1005,16 +996,6 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
                 // Level 2 (20-29): song 2, etc.
                 const musicLevel = Math.floor(ns / 10);
                 if (musicLevel > 0 && musicLevel <= 8 && musicLevel !== currentMusicLevelRef.current) {
-                  const musicFiles = [
-                    '/music/emotional-orchestra-short-145091.mp3',
-                    '/music/epic-love-inspirational-romantic-cinematic-30-seconds-406069.mp3',
-                    '/music/epic-middle-eastern-30-seconds-percussion-389431.mp3',
-                    '/music/falling-grace-348198.mp3',
-                    '/music/hopeful-acoustic-travel-30-seconds-368800.mp3',
-                    '/music/instrumental-music-for-video-blog-stories-cyborg-in-me-27-seconds-188532.mp3',
-                    '/music/pizzicato-play-30-seconds-children-music-394553.mp3',
-                    '/music/western-journey-30-seconds-183089.mp3'
-                  ];
                   
                   // Stop current music if playing
                   if (backgroundMusicRef.current) {
@@ -1022,7 +1003,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
                   }
                   
                   // Start new music for this level
-                  const musicFile = musicFiles[musicLevel - 1];
+                  const musicFile = music[musicLevel - 1];
                   if (musicFile) {
                     try {
                       const audio = new Audio(musicFile);
@@ -1711,42 +1692,46 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      const loadImage = (src: string) =>
+      const loadImage = (src: string | HTMLImageElement): Promise<HTMLImageElement> =>
         new Promise<HTMLImageElement>((resolve, reject) => {
-          const img = new Image();
-          img.onload = () => resolve(img);
-          img.onerror = reject;
-          img.src = src;
+          if (src instanceof HTMLImageElement) {
+            resolve(src);
+          } else {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = reject;
+            img.src = src;
+          }
         });
       try {
-        const base = "/flappy-bird-assets-master";
-            // create a small wing sound pool to avoid currentTime resets on the same element
-            const wingSrc = `${base}/audio/wing.wav`;
-            const wingPool: HTMLAudioElement[] = [];
-            for (let i = 0; i < 4; i++) {
-              const clone = new Audio(wingSrc);
-              clone.preload = "auto";
-              clone.volume = 0.6;
-              wingPool.push(clone);
-            }
-        const entries: [string, string][] = [
-          ["background-day", `${base}/sprites/background-day.png`],
-          ["pipe-green", `${base}/sprites/pipe-green.png`],
-          ["yellowbird-upflap", `${base}/sprites/yellowbird-upflap.png`],
-          ["yellowbird-midflap", `${base}/sprites/yellowbird-midflap.png`],
-          ["yellowbird-downflap", `${base}/sprites/yellowbird-downflap.png`],
-          ["redbird-upflap", `${base}/sprites/redbird-upflap.png`],
-          ["redbird-midflap", `${base}/sprites/redbird-midflap.png`],
-          ["redbird-downflap", `${base}/sprites/redbird-downflap.png`],
-          ["bluebird-upflap", `${base}/sprites/bluebird-upflap.png`],
-          ["bluebird-midflap", `${base}/sprites/bluebird-midflap.png`],
-          ["bluebird-downflap", `${base}/sprites/bluebird-downflap.png`],
-          ["message", `${base}/sprites/message.png`],
-          ["gameover", `${base}/sprites/gameover.png`],
-        ];
-        const images = await Promise.all(entries.map(([, src]) => loadImage(src)));
+        // Create a small wing sound pool to avoid currentTime resets on the same element
+        const wingPool: HTMLAudioElement[] = [];
+        for (let i = 0; i < 4; i++) {
+          const clone = new Audio(audio.wing);
+          clone.preload = "auto";
+          clone.volume = 0.6;
+          wingPool.push(clone);
+        }
+
+        // Build the images map from imported assets
         const map: { [k: string]: HTMLImageElement } = {};
-        entries.forEach(([key], i) => (map[key] = images[i]));
+        const spriteEntries: [string, string][] = [
+          ["background-day", sprites.backgroundDay],
+          ["pipe-green", sprites.pipeGreen],
+          ["yellowbird-upflap", sprites.yellowbirdUpflap],
+          ["yellowbird-midflap", sprites.yellowbirdMidflap],
+          ["yellowbird-downflap", sprites.yellowbirdDownflap],
+          ["redbird-upflap", sprites.redbirdUpflap],
+          ["redbird-midflap", sprites.redbirdMidflap],
+          ["redbird-downflap", sprites.redbirdDownflap],
+          ["bluebird-upflap", sprites.bluebirdUpflap],
+          ["bluebird-midflap", sprites.bluebirdMidflap],
+          ["bluebird-downflap", sprites.bluebirdDownflap],
+          ["message", sprites.message],
+          ["gameover", sprites.gameover],
+        ];
+        const images = await Promise.all(spriteEntries.map(([, src]) => loadImage(src)));
+        spriteEntries.forEach(([key], i) => (map[key] = images[i]));
         
         // Load city backgrounds (8 cities, each with multiple layers)
         // Layer order: 1 (farthest/sky) to higher numbers (closer/foreground)
@@ -1855,10 +1840,10 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
 
         // audio
         const audioMap: { [k: string]: HTMLAudioElement } = {
-          wing: new Audio(`${base}/audio/wing.wav`),
-          point: new Audio(`${base}/audio/point.wav`),
-          hit: new Audio(`${base}/audio/hit.wav`),
-          die: new Audio(`${base}/audio/die.wav`),
+          wing: new Audio(audio.wing),
+          point: new Audio(audio.point),
+          hit: new Audio(audio.hit),
+          die: new Audio(audio.die),
         };
         Object.values(audioMap).forEach((a) => {
           a.preload = "auto";
@@ -1866,13 +1851,12 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         });
         
         // Load portal warp sound (one-shot, doesn't need WebAudio)
-        const portalWarpSound = new Audio('/portalSounds/warp.mp3');
-        portalWarpSound.volume = 0.5;
-        portalWarpSound.preload = "auto";
+        const portalWarpSoundEl = new Audio(portalSounds.warp);
+        portalWarpSoundEl.volume = 0.5;
+        portalWarpSoundEl.preload = "auto";
         
         // digits
-        const digitPaths = Array.from({ length: 10 }, (_, i) => `${base}/sprites/${i}.png`);
-        const digitImgs = await Promise.all(digitPaths.map((p) => loadImage(p)));
+        const digitImgs = await Promise.all(digits.map((d) => loadImage(d)));
         
         // Load wing, point, and portal idle sounds into WebAudio buffers for instant, non-blocking playback on mobile
         let wingBuffer: AudioBuffer | null = null;
@@ -1881,13 +1865,10 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         let audioCtx: AudioContext | null = null;
         try {
           audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-          const wingSrc = `${base}/audio/wing.wav`;
-          const pointSrc = `${base}/audio/point.wav`;
-          const portalIdleSrc = '/portalSounds/idle.mp3';
           const [wingResponse, pointResponse, portalIdleResponse] = await Promise.all([
-            fetch(wingSrc),
-            fetch(pointSrc),
-            fetch(portalIdleSrc)
+            fetch(audio.wing),
+            fetch(audio.point),
+            fetch(portalSounds.idle)
           ]);
           const [wingArrayBuffer, pointArrayBuffer, portalIdleArrayBuffer] = await Promise.all([
             wingResponse.arrayBuffer(),
@@ -1931,7 +1912,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         }
         
         // Load bird chirping sound for flock encounters
-        const birdChirp = new Audio('/bird-chipping.mp3');
+        const birdChirp = new Audio(uiAssets.birdChipping);
         birdChirp.volume = 0.5;
         birdChirp.preload = 'auto';
         
@@ -1992,7 +1973,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           wingBufferRef.current = wingBuffer;
           pointBufferRef.current = pointBuffer;
           portalIdleBufferRef.current = portalIdleBuffer;
-          portalWarpSoundRef.current = portalWarpSound;
+          portalWarpSoundRef.current = portalWarpSoundEl;
           ambientSoundsRef.current = ambientSounds;
           birdChirpSoundRef.current = birdChirp;
           assetsLoadedRef.current = true;
@@ -2082,7 +2063,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
                 </div>
               ) : (
                 <img
-                  src="/flappy-bird-assets-master/sprites/gameover.png"
+                  src={sprites.gameover}
                   alt="Game Over"
                   className="mb-3 w-64 max-w-[80vw] h-auto pointer-events-none select-none"
                   decoding="async"

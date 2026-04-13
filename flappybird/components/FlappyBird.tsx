@@ -3,12 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import DevMenu, { loadDevSettings } from "./DevMenu";
 import { addOrUpdateScore } from "@/lib/scoreManager";
-import {
-  isFileProtocol,
-  loadImageWithFallback,
-  loadAudioWithFallback,
-  createAssetDiagnostics,
-} from "@/lib/assetLoader";
 
 // Base design values (used to scale physics and sizes for different viewports)
 // These can be overridden by dev settings from API
@@ -323,18 +317,18 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
       const startLevel = Math.floor(scoreRef.current / 10);
       if (startLevel > 0 && startLevel <= 8 && !backgroundMusicRef.current) {
         const musicFiles = [
-          './music/emotional-orchestra-short-145091.mp3',
-          './music/epic-love-inspirational-romantic-cinematic-30-seconds-406069.mp3',
-          './music/epic-middle-eastern-30-seconds-percussion-389431.mp3',
-          './music/falling-grace-348198.mp3',
-          './music/hopeful-acoustic-travel-30-seconds-368800.mp3',
-          './music/instrumental-music-for-video-blog-stories-cyborg-in-me-27-seconds-188532.mp3',
-          './music/pizzicato-play-30-seconds-children-music-394553.mp3',
-          './music/western-journey-30-seconds-183089.mp3'
+          '/music/emotional-orchestra-short-145091.mp3',
+          '/music/epic-love-inspirational-romantic-cinematic-30-seconds-406069.mp3',
+          '/music/epic-middle-eastern-30-seconds-percussion-389431.mp3',
+          '/music/falling-grace-348198.mp3',
+          '/music/hopeful-acoustic-travel-30-seconds-368800.mp3',
+          '/music/instrumental-music-for-video-blog-stories-cyborg-in-me-27-seconds-188532.mp3',
+          '/music/pizzicato-play-30-seconds-children-music-394553.mp3',
+          '/music/western-journey-30-seconds-183089.mp3'
         ];
         const musicFile = musicFiles[startLevel - 1];
         if (musicFile) {
-          const audio = loadAudioWithFallback(musicFile);
+          const audio = new Audio(musicFile);
           audio.volume = 0.6;
           audio.loop = true;
           audio.play().catch(() => {});
@@ -1012,14 +1006,14 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
                 const musicLevel = Math.floor(ns / 10);
                 if (musicLevel > 0 && musicLevel <= 8 && musicLevel !== currentMusicLevelRef.current) {
                   const musicFiles = [
-                    './music/emotional-orchestra-short-145091.mp3',
-                    './music/epic-love-inspirational-romantic-cinematic-30-seconds-406069.mp3',
-                    './music/epic-middle-eastern-30-seconds-percussion-389431.mp3',
-                    './music/falling-grace-348198.mp3',
-                    './music/hopeful-acoustic-travel-30-seconds-368800.mp3',
-                    './music/instrumental-music-for-video-blog-stories-cyborg-in-me-27-seconds-188532.mp3',
-                    './music/pizzicato-play-30-seconds-children-music-394553.mp3',
-                    './music/western-journey-30-seconds-183089.mp3'
+                    '/music/emotional-orchestra-short-145091.mp3',
+                    '/music/epic-love-inspirational-romantic-cinematic-30-seconds-406069.mp3',
+                    '/music/epic-middle-eastern-30-seconds-percussion-389431.mp3',
+                    '/music/falling-grace-348198.mp3',
+                    '/music/hopeful-acoustic-travel-30-seconds-368800.mp3',
+                    '/music/instrumental-music-for-video-blog-stories-cyborg-in-me-27-seconds-188532.mp3',
+                    '/music/pizzicato-play-30-seconds-children-music-394553.mp3',
+                    '/music/western-journey-30-seconds-183089.mp3'
                   ];
                   
                   // Stop current music if playing
@@ -1031,7 +1025,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
                   const musicFile = musicFiles[musicLevel - 1];
                   if (musicFile) {
                     try {
-                      const audio = loadAudioWithFallback(musicFile);
+                      const audio = new Audio(musicFile);
                       audio.volume = 0.6; // Quieter than sound effects
                       audio.loop = true;
                       // Force play with promise handling for iOS
@@ -1717,39 +1711,24 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      // Log diagnostics at startup
-      if (isFileProtocol()) {
-        console.info(
-          "📁 Running from file:// protocol. Some assets may not load due to browser security. Recommendation: Use an HTTP server.",
-          createAssetDiagnostics()
-        );
-      }
-
       const loadImage = (src: string) =>
         new Promise<HTMLImageElement>((resolve, reject) => {
           const img = new Image();
-          img.onload = () => {
-            console.debug(`✓ Loaded image: ${src}`);
-            resolve(img);
-          };
-          img.onerror = () => {
-            console.warn(`✗ Failed to load image: ${src}`);
-            reject(new Error(`Image load failed: ${src}`));
-          };
+          img.onload = () => resolve(img);
+          img.onerror = reject;
           img.src = src;
         });
       try {
-        const base = "./flappy-bird-assets-master";
+        const base = "/flappy-bird-assets-master";
             // create a small wing sound pool to avoid currentTime resets on the same element
             const wingSrc = `${base}/audio/wing.wav`;
-        // Load audio files with better error messages
-        const wingPool: HTMLAudioElement[] = [];
-        for (let i = 0; i < 4; i++) {
-          const clone = loadAudioWithFallback(wingSrc);
-          clone.preload = "auto";
-          clone.volume = 0.6;
-          wingPool.push(clone);
-        }
+            const wingPool: HTMLAudioElement[] = [];
+            for (let i = 0; i < 4; i++) {
+              const clone = new Audio(wingSrc);
+              clone.preload = "auto";
+              clone.volume = 0.6;
+              wingPool.push(clone);
+            }
         const entries: [string, string][] = [
           ["background-day", `${base}/sprites/background-day.png`],
           ["pipe-green", `${base}/sprites/pipe-green.png`],
@@ -1765,25 +1744,15 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           ["message", `${base}/sprites/message.png`],
           ["gameover", `${base}/sprites/gameover.png`],
         ];
-        const images = await Promise.allSettled(
-          entries.map(([, src]) => loadImage(src))
-        );
+        const images = await Promise.all(entries.map(([, src]) => loadImage(src)));
         const map: { [k: string]: HTMLImageElement } = {};
-        entries.forEach(([key], i) => {
-          if (
-            images[i].status === "fulfilled" &&
-            images[i].status === "fulfilled"
-          ) {
-            map[key] = (images[i] as PromiseFulfilledResult<HTMLImageElement>)
-              .value;
-          }
-        });
+        entries.forEach(([key], i) => (map[key] = images[i]));
         
         // Load city backgrounds (8 cities, each with multiple layers)
         // Layer order: 1 (farthest/sky) to higher numbers (closer/foreground)
         const cityBgs: HTMLImageElement[][] = [];
         for (let cityNum = 1; cityNum <= 8; cityNum++) {
-          const cityBase = `./free-city-backgrounds-pixel-art/city ${cityNum}`;
+          const cityBase = `/free-city-backgrounds-pixel-art/city ${cityNum}`;
           // Try loading layers 1-10 (not all cities have all layers)
           const layerPromises = Array.from({ length: 10 }, (_, i) => i + 1).map(async (layerNum) => {
             try {
@@ -1886,10 +1855,10 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
 
         // audio
         const audioMap: { [k: string]: HTMLAudioElement } = {
-          wing: loadAudioWithFallback(`${base}/audio/wing.wav`),
-          point: loadAudioWithFallback(`${base}/audio/point.wav`),
-          hit: loadAudioWithFallback(`${base}/audio/hit.wav`),
-          die: loadAudioWithFallback(`${base}/audio/die.wav`),
+          wing: new Audio(`${base}/audio/wing.wav`),
+          point: new Audio(`${base}/audio/point.wav`),
+          hit: new Audio(`${base}/audio/hit.wav`),
+          die: new Audio(`${base}/audio/die.wav`),
         };
         Object.values(audioMap).forEach((a) => {
           a.preload = "auto";
@@ -1897,7 +1866,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         });
         
         // Load portal warp sound (one-shot, doesn't need WebAudio)
-        const portalWarpSound = loadAudioWithFallback('./portalSounds/warp.mp3');
+        const portalWarpSound = new Audio('/portalSounds/warp.mp3');
         portalWarpSound.volume = 0.5;
         portalWarpSound.preload = "auto";
         
@@ -1944,14 +1913,14 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           '/rainsound.mp3', // Level 4: falling-grace -> rain (melancholic)
           null, // Level 5: hopeful-acoustic -> no ambient
           null, // Level 6: cyborg -> no ambient
-          './windsound.mp3', // Level 7: pizzicato-children -> playful wind
-          './windsound.mp3', // Level 8: western-journey -> desert wind
+          '/windsound.mp3', // Level 7: pizzicato-children -> playful wind
+          '/windsound.mp3', // Level 8: western-journey -> desert wind
         ];
         const ambientSounds: HTMLAudioElement[] = [];
         for (let i = 0; i < ambientFiles.length; i++) {
           const file = ambientFiles[i];
           if (file) {
-            const audio = loadAudioWithFallback(file);
+            const audio = new Audio(file);
             audio.loop = true;
             audio.volume = 0.4; // Rain and wind ambient volume
             audio.preload = 'auto';
@@ -1962,7 +1931,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         }
         
         // Load bird chirping sound for flock encounters
-        const birdChirp = loadAudioWithFallback('./bird-chipping.mp3');
+        const birdChirp = new Audio('/bird-chipping.mp3');
         birdChirp.volume = 0.5;
         birdChirp.preload = 'auto';
         
@@ -2113,7 +2082,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
                 </div>
               ) : (
                 <img
-                  src="./flappy-bird-assets-master/sprites/gameover.png"
+                  src="/flappy-bird-assets-master/sprites/gameover.png"
                   alt="Game Over"
                   className="mb-3 w-64 max-w-[80vw] h-auto pointer-events-none select-none"
                   decoding="async"

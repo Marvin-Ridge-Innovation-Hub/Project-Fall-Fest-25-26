@@ -26,7 +26,7 @@ export default function Home() {
         <div className="w-full flex items-center justify-center pt-1 animate-float">
           <img
             style={{borderRadius: 10}}
-            src="./csclogo.png"
+            src="/csclogo.png"
             alt="CSC Logo"
             className="w-full h-auto object-contain drop-shadow-lg"
             decoding="async"
@@ -69,7 +69,7 @@ export default function Home() {
           <div className="w-full flex items-center justify-center mb-3">
             <img
               style={{borderRadius: 10}}
-              src="./csclogo.png"
+              src="/csclogo.png"
               alt="CSC Logo"
               className="w-full h-auto object-contain drop-shadow-md"
               decoding="async"

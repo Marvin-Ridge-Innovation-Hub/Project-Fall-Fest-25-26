@@ -72,9 +72,19 @@ export const sprites = {
   gameover: gameover.src,
   base: base.src,
 };
-const rel = (src: string) => (src.startsWith('/') ? '.' + src : src);
-export const digits = [rel(digit0.src), rel(digit1.src), rel(digit2.src), rel(digit3.src), rel(digit4.src), rel(digit5.src), rel(digit6.src), rel(digit7.src), rel(digit8.src), rel(digit9.src)];
-
+// export const digits = [digit0.src, digit1.src, digit2.src, digit3.src, digit4.src, digit5.src, digit6.src, digit7.src, digit8.src, digit9.src];
+export const digits: string[] = [
+  "./flappy-bird-assets-master/sprites/0.png",
+  "./flappy-bird-assets-master/sprites/1.png",
+  "./flappy-bird-assets-master/sprites/2.png",
+  "./flappy-bird-assets-master/sprites/3.png",
+  "./flappy-bird-assets-master/sprites/4.png",
+  "./flappy-bird-assets-master/sprites/5.png",
+  "./flappy-bird-assets-master/sprites/6.png",
+  "./flappy-bird-assets-master/sprites/7.png",
+  "./flappy-bird-assets-master/sprites/8.png",
+  "./flappy-bird-assets-master/sprites/9.png",
+];
 export const audio = {
   wing: wingAudio,
   point: pointAudio,

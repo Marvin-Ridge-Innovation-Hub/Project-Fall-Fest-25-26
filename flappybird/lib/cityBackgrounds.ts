@@ -56,7 +56,7 @@ import city8Layer3 from "@/public/free-city-backgrounds-pixel-art/city8/3.png";
  */
 const rel = (src: string) => (src.startsWith('/') ? '.' + src : src);
 
-export const cityBackgrounds: string[][] = [
+/* export const cityBackgrounds: string[][] = [
   [city1Layer1.src, city1Layer2.src, city1Layer3.src],
   [city2Layer1.src, city2Layer2.src, city2Layer3.src],
   [city3Layer1.src, city3Layer2.src, city3Layer3.src],
@@ -66,7 +66,64 @@ export const cityBackgrounds: string[][] = [
   [city7Layer1.src, city7Layer2.src, city7Layer3.src],
   [city8Layer1.src, city8Layer2.src, city8Layer3.src],
 ].map(layerSet => layerSet.map(rel)); // Convert to relative paths for static export
+*/
+export const cityBackgrounds: string[][] = [
+  // City 1
+  [
+    "./free-city-backgrounds-pixel-art/city1/1.png",
+    "./free-city-backgrounds-pixel-art/city1/2.png",
+    "./free-city-backgrounds-pixel-art/city1/3.png",
+  ],
 
+  // City 2
+  [
+    "./free-city-backgrounds-pixel-art/city2/1.png",
+    "./free-city-backgrounds-pixel-art/city2/2.png",
+    "./free-city-backgrounds-pixel-art/city2/3.png",
+  ],
+
+  // City 3
+  [
+    "./free-city-backgrounds-pixel-art/city3/1.png",
+    "./free-city-backgrounds-pixel-art/city3/2.png",
+    "./free-city-backgrounds-pixel-art/city3/3.png",
+  ],
+
+  // City 4
+  [
+    "./free-city-backgrounds-pixel-art/city4/1.png",
+    "./free-city-backgrounds-pixel-art/city4/2.png",
+    "./free-city-backgrounds-pixel-art/city4/3.png",
+  ],
+
+  // City 5
+  [
+    "./free-city-backgrounds-pixel-art/city5/1.png",
+    "./free-city-backgrounds-pixel-art/city5/2.png",
+    "./free-city-backgrounds-pixel-art/city5/3.png",
+  ],
+
+  // City 6
+  [
+    "./free-city-backgrounds-pixel-art/city6/1.png",
+    "./free-city-backgrounds-pixel-art/city6/2.png",
+    "./free-city-backgrounds-pixel-art/city6/3.png",
+  ],
+
+  // City 7
+  [
+    "./free-city-backgrounds-pixel-art/city7/1.png",
+    "./free-city-backgrounds-pixel-art/city7/2.png",
+    "./free-city-backgrounds-pixel-art/city7/3.png",
+  ],
+
+  // City 8
+  [
+    "./free-city-backgrounds-pixel-art/city8/1.png",
+    "./free-city-backgrounds-pixel-art/city8/2.png",
+    "./free-city-backgrounds-pixel-art/city8/3.png",
+  ],
+];
 /**
  * Get city background layers as image sources
  * Returns array of layer sources for the given city index

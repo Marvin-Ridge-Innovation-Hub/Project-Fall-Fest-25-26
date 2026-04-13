@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { sprites } from "@/lib/assets";
+import { sprites, digits } from "@/lib/assets";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -56,8 +56,8 @@ export default function RootLayout({
         <link rel="preload" as="image" href={sprites.message} />
         <link rel="preload" as="image" href={sprites.gameover} />
         {/* Optional: preload number sprites used for the score */}
-        {Array.from({ length: 10 }, (_, i) => (
-          <link key={i} rel="preload" as="image" href={`/flappy-bird-assets-master/sprites/${i}.png`} />
+        {digits.map((digit, i) => (
+          <link key={i} rel="preload" as="image" href={digit} />
         ))}
       </head>
       <body

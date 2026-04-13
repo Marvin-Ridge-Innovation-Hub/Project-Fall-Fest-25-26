@@ -3,6 +3,8 @@
  * Works offline by fetching public/data/game-settings.json
  */
 
+import { fetchWithFallback, isFileProtocol } from "./assetLoader";
+
 export type GameSettings = {
   BASE_WIDTH: number;
   BASE_HEIGHT: number;
@@ -37,27 +39,39 @@ export const DEFAULT_SETTINGS: GameSettings = {
   INTERVAL_REDUCTION_MS_PER_LEVEL: 50,
 };
 
-const EMBEDDED_SETTINGS_URL = "/data/game-settings.json";
+const EMBEDDED_SETTINGS_URL = "./data/game-settings.json";
 
 /**
  * Load game settings from embedded static JSON file
  * Falls back to DEFAULT_SETTINGS if loading fails
+ * Enhanced with protocol detection for file:// scenarios
  */
 export async function loadGameSettings(): Promise<GameSettings> {
   try {
+    // Try using the enhanced fetch utility first
+    const result = await fetchWithFallback(EMBEDDED_SETTINGS_URL, (text) =>
+      (JSON.parse(text) as Partial<GameSettings>)
+    );
+    if (result) {
+      return { ...DEFAULT_SETTINGS, ...result };
+    }
+
+    // If enhanced fetch fails, try direct fetch
     const response = await fetch(EMBEDDED_SETTINGS_URL);
     if (!response.ok) {
       console.warn(
-        "Failed to load game settings, using defaults:",
-        response.status
+        `Settings fetch returned status ${response.status}${isFileProtocol() ? " (file:// protocol may have restrictions)" : ""}`
       );
       return DEFAULT_SETTINGS;
     }
     const loaded = (await response.json()) as Partial<GameSettings>;
-    // Merge with defaults to ensure all required fields are present
     return { ...DEFAULT_SETTINGS, ...loaded };
   } catch (error) {
-    console.warn("Failed to load game settings, using defaults:", error);
+    console.warn(
+      "Failed to load game settings, using defaults:",
+      error,
+      isFileProtocol() ? "(file protocol detected)" : ""
+    );
     return DEFAULT_SETTINGS;
   }
 }

@@ -3,6 +3,8 @@
  * Works offline by combining static data (public/data/scores.json) with user-submitted scores (localStorage)
  */
 
+import { fetchWithFallback, isFileProtocol } from "./assetLoader";
+
 export type ScoreEntry = {
   id?: string;
   firstName?: string;
@@ -13,18 +15,35 @@ export type ScoreEntry = {
 };
 
 const SCORES_STORAGE_KEY = "flappybird_scores";
-const EMBEDDED_SCORES_URL = "/data/scores.json";
+const EMBEDDED_SCORES_URL = "./data/scores.json";
 
 /**
  * Load embedded scores from the static JSON file (included in build output)
+ * Falls back gracefully if fetch fails (common with file:// protocol)
  */
 export async function loadEmbeddedScores(): Promise<ScoreEntry[]> {
   try {
+    // Try using the enhanced fetch utility first
+    const result = await fetchWithFallback(EMBEDDED_SCORES_URL, (text) =>
+      JSON.parse(text) as ScoreEntry[]
+    );
+    if (result) return result;
+
+    // If enhanced fetch fails, try direct fetch
     const response = await fetch(EMBEDDED_SCORES_URL);
-    if (!response.ok) return [];
+    if (!response.ok) {
+      console.warn(
+        `Scores fetch returned status ${response.status}${isFileProtocol() ? " (file:// protocol may have restrictions)" : ""}`
+      );
+      return [];
+    }
     return (await response.json()) as ScoreEntry[];
   } catch (error) {
-    console.warn("Failed to load embedded scores:", error);
+    console.warn(
+      "Failed to load embedded scores:",
+      error,
+      isFileProtocol() ? "(file protocol detected)" : ""
+    );
     return [];
   }
 }

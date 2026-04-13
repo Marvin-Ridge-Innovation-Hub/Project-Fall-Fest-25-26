@@ -1889,15 +1889,15 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         const ambientFiles = [
           null, // Level 0: no ambient
           null, // Level 1: emotional-orchestra -> no ambient
-          '/rainsound.mp3', // Level 2: epic-love-romantic -> rain
-          '/windsound.mp3', // Level 3: epic-middle-eastern -> wind
-          '/rainsound.mp3', // Level 4: falling-grace -> rain (melancholic)
+          ambientSounds.rain, // Level 2: epic-love-romantic -> rain
+          ambientSounds.wind, // Level 3: epic-middle-eastern -> wind
+          ambientSounds.rain, // Level 4: falling-grace -> rain (melancholic)
           null, // Level 5: hopeful-acoustic -> no ambient
           null, // Level 6: cyborg -> no ambient
-          '/windsound.mp3', // Level 7: pizzicato-children -> playful wind
-          '/windsound.mp3', // Level 8: western-journey -> desert wind
+          ambientSounds.wind, // Level 7: pizzicato-children -> playful wind
+          ambientSounds.wind, // Level 8: western-journey -> desert wind
         ];
-        const ambientSounds: HTMLAudioElement[] = [];
+        const ambientAudioElements: HTMLAudioElement[] = [];
         for (let i = 0; i < ambientFiles.length; i++) {
           const file = ambientFiles[i];
           if (file) {
@@ -1905,9 +1905,9 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
             audio.loop = true;
             audio.volume = 0.4; // Rain and wind ambient volume
             audio.preload = 'auto';
-            ambientSounds.push(audio);
+            ambientAudioElements.push(audio);
           } else {
-            ambientSounds.push(null as any);
+            ambientAudioElements.push(null as any);
           }
         }
         
@@ -1974,7 +1974,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           pointBufferRef.current = pointBuffer;
           portalIdleBufferRef.current = portalIdleBuffer;
           portalWarpSoundRef.current = portalWarpSoundEl;
-          ambientSoundsRef.current = ambientSounds;
+          ambientSoundsRef.current = ambientAudioElements;
           birdChirpSoundRef.current = birdChirp;
           assetsLoadedRef.current = true;
           setAssetsLoaded(true);

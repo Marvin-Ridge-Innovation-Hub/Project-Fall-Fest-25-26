@@ -6,6 +6,7 @@ const nextConfig: NextConfig = {
   assetPrefix: './',
   images: {
     unoptimized: true,
-  }, };
+  },
+};
 
 export default nextConfig;

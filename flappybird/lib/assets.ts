@@ -72,8 +72,8 @@ export const sprites = {
   gameover: gameover.src,
   base: base.src,
 };
-
-export const digits = [digit0.src, digit1.src, digit2.src, digit3.src, digit4.src, digit5.src, digit6.src, digit7.src, digit8.src, digit9.src];
+const rel = (src: string) => (src.startsWith('/') ? '.' + src : src);
+export const digits = [rel(digit0.src), rel(digit1.src), rel(digit2.src), rel(digit3.src), rel(digit4.src), rel(digit5.src), rel(digit6.src), rel(digit7.src), rel(digit8.src), rel(digit9.src)];
 
 export const audio = {
   wing: wingAudio,

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import DevMenu, { loadDevSettings } from "./DevMenu";
 import { addOrUpdateScore } from "@/lib/scoreManager";
 import { sprites, digits, audio, music, ambientSounds, portalSounds, uiAssets } from "@/lib/assets";
-
+import { cityBackgrounds } from "@/lib/cityBackgrounds";
 // Base design values (used to scale physics and sizes for different viewports)
 // These can be overridden by dev settings from API
 export let BASE_WIDTH = 480;
@@ -1733,21 +1733,21 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         const images = await Promise.all(spriteEntries.map(([, src]) => loadImage(src)));
         spriteEntries.forEach(([key], i) => (map[key] = images[i]));
         
-        // Load city backgrounds (8 cities, each with multiple layers)
-        // Layer order: 1 (farthest/sky) to higher numbers (closer/foreground)
+// Load city backgrounds from static imports (works on file:// protocol)
         const cityBgs: HTMLImageElement[][] = [];
-        for (let cityNum = 1; cityNum <= 8; cityNum++) {
-          const cityBase = `/free-city-backgrounds-pixel-art/city${cityNum}`;
-          // Try loading layers 1-10 (not all cities have all layers)
-          const layerPromises = Array.from({ length: 10 }, (_, i) => i + 1).map(async (layerNum) => {
+        
+        for (const layerPaths of cityBackgrounds) {
+          const layerPromises = layerPaths.map(async (src) => {
             try {
-              return await loadImage(`${cityBase}/${layerNum}.png`);
-            } catch {
-              return null; // Layer doesn't exist for this city
+              return await loadImage(src);
+            } catch (error) {
+              console.warn(`Failed to load city layer: ${src}`, error);
+              return null; 
             }
           });
+          
           const layers = await Promise.all(layerPromises);
-          // Filter out null values (non-existent layers)
+          // Filter out null values (failed loads)
           cityBgs.push(layers.filter((l): l is HTMLImageElement => l !== null));
         }
         

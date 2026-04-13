@@ -1752,7 +1752,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
         // Layer order: 1 (farthest/sky) to higher numbers (closer/foreground)
         const cityBgs: HTMLImageElement[][] = [];
         for (let cityNum = 1; cityNum <= 8; cityNum++) {
-          const cityBase = `/free-city-backgrounds-pixel-art/city ${cityNum}`;
+          const cityBase = `/free-city-backgrounds-pixel-art/city${cityNum}`;
           // Try loading layers 1-10 (not all cities have all layers)
           const layerPromises = Array.from({ length: 10 }, (_, i) => i + 1).map(async (layerNum) => {
             try {

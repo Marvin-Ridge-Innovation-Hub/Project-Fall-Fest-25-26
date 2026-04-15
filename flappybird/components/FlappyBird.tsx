@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import DevMenu, { loadDevSettings } from "./DevMenu";
-import { addOrUpdateScore } from "@/lib/scoreManager";
 import { sprites, digits, audio, music, ambientSounds, portalSounds, uiAssets } from "@/lib/assets";
 import { cityBackgrounds } from "@/lib/cityBackgrounds";
+import { enqueuePendingScore } from "@/lib/googleSheetsLeaderboard";
 // Base design values (used to scale physics and sizes for different viewports)
 // These can be overridden by dev settings from API
 export let BASE_WIDTH = 480;
@@ -147,10 +147,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   const victoryCompleteRef = useRef<boolean>(false); // Track if bird has completely flown off screen
   // Dev: allow starting score from URL parameter (e.g., ?startScore=85)
   const startScoreRef = useRef<number>(0);
-  const [studentId, setStudentId] = useState<string>("");
-  const [firstName, setFirstName] = useState<string>("");
-  const [lastInitial, setLastInitial] = useState<string>("");
-  const [requiresProfile, setRequiresProfile] = useState<boolean>(false);
+  const [playerName, setPlayerName] = useState<string>("");
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [devMode, setDevMode] = useState<boolean>(false);
   const [showDevMenu, setShowDevMenu] = useState<boolean>(false);
@@ -269,10 +266,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
     completedPortalsRef.current.clear();
     
     // reset submission fields
-    setStudentId("");
-    setFirstName("");
-    setLastInitial("");
-    setRequiresProfile(false);
+    setPlayerName("");
   }, []);
 
   // Dev: read startScore from URL parameter on mount
@@ -350,11 +344,17 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   // input handlers
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Don't hijack Space/Enter when the user is typing in an input
+      const tag = (e.target as HTMLElement)?.tagName;
+      const isTyping = tag === "INPUT" || tag === "TEXTAREA";
+    
       if (e.code === "Space" || e.code === "ArrowUp") {
+        if (isTyping) return;   // ← let the input field handle the space normally
         e.preventDefault();
         flap();
       }
       if (e.code === "Enter" && gameOver) {
+        if (isTyping) return;   // ← optional: prevent Enter from also resetting mid-type
         e.preventDefault();
         reset();
       }
@@ -1785,8 +1785,20 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
           c.width = sampleW; c.height = sampleH;
           const cctx = c.getContext('2d');
           if (!cctx) return { h: 120, s: 70, l: 50 };
-          cctx.drawImage(img, 0, 0, sampleW, sampleH);
-          const data = cctx.getImageData(0, 0, sampleW, sampleH).data;
+          try {
+            cctx.drawImage(img, 0, 0, sampleW, sampleH);
+          } catch {
+            return { h: 120, s: 70, l: 50 };
+          }
+
+          let data: Uint8ClampedArray;
+          try {
+            // Note: under `file://`, Chrome can treat drawn file images as cross-origin
+            // and throw a SecurityError here (tainted canvas). If that happens, fall back.
+            data = cctx.getImageData(0, 0, sampleW, sampleH).data;
+          } catch {
+            return { h: 120, s: 70, l: 50 };
+          }
           let sumX = 0, sumY = 0, wSum = 0, sSum = 0, lSum = 0;
           for (let i = 0; i < data.length; i += 4) {
             const a = data[i + 3] / 255;
@@ -1935,31 +1947,41 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
             c.height = basePipe.height;
             const cctx = c.getContext("2d");
             if (cctx) {
-              // Step 1: Draw original pipe
-              cctx.drawImage(basePipe, 0, 0);
-              
-              // Step 2: Convert to grayscale using desaturation
-              const imageData = cctx.getImageData(0, 0, c.width, c.height);
-              const data = imageData.data;
-              for (let i = 0; i < data.length; i += 4) {
-                // Calculate grayscale value (weighted average for better perception)
-                const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-                data[i] = gray;     // R
-                data[i + 1] = gray; // G
-                data[i + 2] = gray; // B
-                // Keep alpha (data[i + 3]) unchanged
+              try {
+                // Step 1: Draw original pipe
+                cctx.drawImage(basePipe, 0, 0);
+
+                // Step 2: Convert to grayscale using desaturation
+                // Note: `getImageData()` can throw on `file://` (tainted canvas). If so, keep the original pipe.
+                const imageData = cctx.getImageData(0, 0, c.width, c.height);
+                const data = imageData.data;
+                for (let i = 0; i < data.length; i += 4) {
+                  // Calculate grayscale value (weighted average for better perception)
+                  const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+                  data[i] = gray;     // R
+                  data[i + 1] = gray; // G
+                  data[i + 2] = gray; // B
+                  // Keep alpha (data[i + 3]) unchanged
+                }
+                cctx.putImageData(imageData, 0, 0);
+
+                // Step 3: Apply vibrant color tint with multiply blend
+                cctx.globalCompositeOperation = "multiply";
+                cctx.fillStyle = `hsl(${hue}, ${sat}%, ${light}%)`;
+                cctx.fillRect(0, 0, c.width, c.height);
+
+                // Step 4: Restore alpha channel
+                cctx.globalCompositeOperation = "destination-in";
+                cctx.drawImage(basePipe, 0, 0);
+                cctx.globalCompositeOperation = "source-over";
+              } catch {
+                // Keep original pipe as-is (no tint) for restricted environments (e.g. `file://`).
+                try {
+                  cctx.globalCompositeOperation = "source-over";
+                  cctx.clearRect(0, 0, c.width, c.height);
+                  cctx.drawImage(basePipe, 0, 0);
+                } catch {}
               }
-              cctx.putImageData(imageData, 0, 0);
-              
-              // Step 3: Apply vibrant color tint with multiply blend
-              cctx.globalCompositeOperation = "multiply";
-              cctx.fillStyle = `hsl(${hue}, ${sat}%, ${light}%)`;
-              cctx.fillRect(0, 0, c.width, c.height);
-              
-              // Step 4: Restore alpha channel
-              cctx.globalCompositeOperation = "destination-in";
-              cctx.drawImage(basePipe, 0, 0);
-              cctx.globalCompositeOperation = "source-over";
             }
             tints.push(c);
           }
@@ -1993,30 +2015,51 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
   }, []);
 
   const submitScore = useCallback(async () => {
-    if (!studentId.trim()) {
-      alert("Please enter your Student ID or email prefix.");
+    const rawName = playerName.trim();
+    if (!rawName) {
+      alert("Please enter your name.");
       return;
     }
-    
-    // In offline mode, require profile info for all new entries
-    if (!firstName.trim() || !lastInitial.trim()) {
-      alert("Please enter your first name and last initial.");
-      return;
-    }
-    
+
+    // Unique-name leaderboard: normalize whitespace and case for the key.
+    const normalizedName = rawName.replace(/\s+/g, " ").toLowerCase();
+    const id = `name:${normalizedName}`;
+
     setSubmitting(true);
     try {
-      const entry = {
-        id: studentId.trim().toLowerCase(),
-        firstName: firstName.trim(),
-        lastInitial: lastInitial.trim().charAt(0).toUpperCase(),
+      const storageKey = "flappybird_scores";
+      const nowIso = new Date().toISOString();
+
+      let local: any[] = [];
+      try {
+        const stored = localStorage.getItem(storageKey);
+        const parsed = stored ? JSON.parse(stored) : [];
+        local = Array.isArray(parsed) ? parsed : [];
+      } catch {
+        local = [];
+      }
+
+      const existingIndex = local.findIndex((s) => String((s as any).id ?? "") === id);
+      const entry: any = {
+        id,
+        name: rawName,
         score,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        createdAt: existingIndex >= 0 ? (local[existingIndex]?.createdAt ?? nowIso) : nowIso,
+        updatedAt: nowIso,
       };
-      
-      // Save to localStorage (works offline)
-      addOrUpdateScore(entry);
+
+      if (existingIndex >= 0) {
+        // Update the existing name’s score (overwrite).
+        local[existingIndex] = entry;
+      } else {
+        local.push(entry);
+      }
+
+      localStorage.setItem(storageKey, JSON.stringify(local));
+
+      // Queue for upload to Google Sheets (source of truth). This prevents deleted sheet rows
+      // from being resurrected unless a new submission is made locally.
+      enqueuePendingScore(entry);
       
       // Notify parent to refresh leaderboard
       onScoreSubmitted();
@@ -2026,7 +2069,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
     } finally {
       setSubmitting(false);
     }
-  }, [firstName, lastInitial, onScoreSubmitted, reset, score, studentId]);
+  }, [onScoreSubmitted, playerName, reset, score]);
 
   return (
     <div className={`w-full h-full flex flex-col ${fullScreen ? "items-center justify-center" : "items-center"}`}>
@@ -2075,34 +2118,15 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
                 Score: {score} {gameWon ? '🎉' : '🎯'}
               </div>
               <div className="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
-                Enter your Student ID (or teacher email prefix) to submit your score.
+                Enter your name to submit your score.
               </div>
               <input
                 className="w-full mb-2 rounded-lg border-2 border-blue-200 dark:border-blue-800 bg-transparent px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-400 transition-all duration-200"
-                value={studentId}
-                onChange={(e) => setStudentId(e.target.value)}
-                placeholder="Student ID or email prefix"
-                maxLength={40}
+                value={playerName}
+                onChange={(e) => setPlayerName(e.target.value)}
+                placeholder="Name"
+                maxLength={60}
               />
-              {requiresProfile && (
-                <div className="grid grid-cols-1 gap-2 mb-2">
-                  <input
-                    className="w-full rounded-lg border-2 border-blue-200 dark:border-blue-800 bg-transparent px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-400 transition-all duration-200"
-                    value={firstName}
-                    onChange={(e) => setFirstName(e.target.value)}
-                    placeholder="First name"
-                    maxLength={40}
-                  />
-                  <input
-                    className="w-full rounded-lg border-2 border-blue-200 dark:border-blue-800 bg-transparent px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-400 transition-all duration-200"
-                    value={lastInitial}
-                    onChange={(e) => setLastInitial(e.target.value)}
-                    placeholder="Last initial"
-                    maxLength={1}
-                  />
-                  <div className="text-xs text-zinc-500">✨ We only store your first name and last initial.</div>
-                </div>
-              )}
               <div className="flex gap-2 justify-end">
                 <button
                   className="px-4 py-2.5 rounded-lg border-2 border-zinc-300 dark:border-zinc-600 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-all duration-200"
@@ -2116,7 +2140,7 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
                   onClick={submitScore}
                   disabled={submitting}
                 >
-                  {submitting ? "Submitting…" : requiresProfile ? "Submit 🚀" : "Continue →"}
+                  {submitting ? "Submitting…" : "Submit 🚀"}
                 </button>
               </div>
               </div>

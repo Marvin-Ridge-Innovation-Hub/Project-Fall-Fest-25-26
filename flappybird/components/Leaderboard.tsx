@@ -6,11 +6,14 @@ import { getCombinedLeaderboard, type ScoreEntry } from "@/lib/scoreManager";
 export default function Leaderboard({ refreshKey }: { refreshKey: number }) {
   const [scores, setScores] = useState<ScoreEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [updating, setUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
     try {
-      setLoading(true);
+      // Keep showing previous scores while refreshing.
+      if (scores.length === 0) setLoading(true);
+      else setUpdating(true);
       setError(null);
       const data = await getCombinedLeaderboard();
       setScores(data);
@@ -18,11 +21,16 @@ export default function Leaderboard({ refreshKey }: { refreshKey: number }) {
       setError((e as Error).message);
     } finally {
       setLoading(false);
+      setUpdating(false);
     }
   }
 
   useEffect(() => {
     load();
+    const id = window.setInterval(() => {
+      load();
+    }, 30_000);
+    return () => window.clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey]);
 
@@ -31,14 +39,14 @@ export default function Leaderboard({ refreshKey }: { refreshKey: number }) {
       <h2 className="text-2xl font-bold mb-4 bg-gradient-to-r from-blue-600 to-indigo-600 dark:from-blue-400 dark:to-indigo-400 bg-clip-text text-transparent">
         🏆 Leaderboard
       </h2>
-      {loading ? (
-        <p className="text-sm text-zinc-500">Loading…</p>
-      ) : error ? (
+      {error ? (
         <p className="text-sm text-red-600">{error}</p>
+      ) : loading && scores.length === 0 ? (
+        <p className="text-sm text-zinc-500">Loading…</p>
       ) : scores.length === 0 ? (
         <p className="text-sm text-zinc-500">No scores yet. Be the first!</p>
       ) : (
-        <ol className="space-y-2">
+        <ol className={`space-y-2 ${updating ? "opacity-90" : ""}`}>
           {scores.map((s, i) => {
             const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : null;
             const isTopThree = i < 3;
@@ -71,7 +79,9 @@ export default function Leaderboard({ refreshKey }: { refreshKey: number }) {
           })}
         </ol>
       )}
-      <div className="mt-4 text-xs text-zinc-500 text-center">✨ All-time top scores ✨</div>
+      <div className="mt-4 text-xs text-zinc-500 text-center">
+        {updating ? "Updating…" : "✨ All-time top scores ✨"}
+      </div>
     </div>
   );
 }

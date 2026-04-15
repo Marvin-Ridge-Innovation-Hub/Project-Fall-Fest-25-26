@@ -4,11 +4,13 @@
  */
 
 import scoresData from "@/public/data/scores.json";
+import { syncLeaderboardWithGoogleSheets } from "@/lib/googleSheetsLeaderboard";
 
 export type ScoreEntry = {
   id?: string;
   firstName?: string;
   lastInitial?: string;
+  name?: string;
   score: number;
   createdAt: string;
   updatedAt?: string;
@@ -85,6 +87,10 @@ export function addOrUpdateScore(entry: ScoreEntry): void {
  * Get combined leaderboard: embedded scores + localStorage scores, sorted by score
  */
 export async function getCombinedLeaderboard(): Promise<ScoreEntry[]> {
+  // Best-effort sync in the background: never throw, never block gameplay/UI.
+  // For file:// static export, this runs in-browser and uses an Apps Script endpoint if configured.
+  void syncLeaderboardWithGoogleSheets({ timeoutMs: 6000 }).catch(() => {});
+
   const embedded = await loadEmbeddedScores();
   const local = loadLocalScores();
 

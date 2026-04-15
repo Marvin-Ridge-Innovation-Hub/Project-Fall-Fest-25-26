@@ -14,6 +14,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  // Avoid Next defaulting to http://localhost:3000 for social images in static export.
+  // (This does not affect gameplay; it just keeps metadata consistent across environments.)
+  metadataBase: new URL("https://fall-fest-flappy.local"),
   title: "Flappy Bird",
   description: "A simple Flappy Bird game with leaderboard.",
   openGraph: {
@@ -35,7 +38,8 @@ export const metadata: Metadata = {
     images: [sprites.message],
   },
   icons: {
-    icon: sprites.yellowbirdMidflap,
+    // Use a relative favicon path so `file://` opens don't try to load `/favicon.ico` from disk root.
+    icon: [{ url: "./favicon.ico" }],
   },
 };
 

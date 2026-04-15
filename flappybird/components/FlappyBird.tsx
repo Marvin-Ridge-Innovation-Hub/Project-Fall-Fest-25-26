@@ -2040,6 +2040,11 @@ export default function FlappyBird({ onScoreSubmitted, fullScreen = false }: { o
       }
 
       const existingIndex = local.findIndex((s) => String((s as any).id ?? "") === id);
+      if (existingIndex >= 0 && local[existingIndex].score >= score) {
+        reset();
+        alert("You already have a higher score. Try again!");
+        return;
+      }
       const entry: any = {
         id,
         name: rawName,
